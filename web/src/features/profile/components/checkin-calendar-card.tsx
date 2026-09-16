@@ -49,6 +49,7 @@ import { cn } from '@/lib/utils'
 
 import { getCheckinStatus, performCheckin } from '../api'
 import type { CheckinRecord } from '../types'
+import { CheckinRules } from './checkin-rules'
 
 interface CheckinCalendarCardProps {
   checkinEnabled: boolean
@@ -334,6 +335,9 @@ export function CheckinCalendarCard({
             </Button>
           </div>
         </div>
+
+        {/* Usage-based tiered rules (same presentation as the old Xingya card) */}
+        <CheckinRules checkinData={checkinData} checkedToday={checkedToday} />
 
         {!collapsed ? (
           <>

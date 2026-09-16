@@ -219,11 +219,38 @@ export interface CheckinStats {
 /**
  * Check-in status response
  */
+export interface CheckinTier {
+  /** Rule A: yesterday request count. Rules B/C: platform currency (🌱). */
+  threshold: number
+  min_reward: number
+  max_reward: number
+}
+
 export interface CheckinStatusResponse {
   /** Whether check-in feature is enabled */
   enabled: boolean
   /** Check-in statistics */
   stats: CheckinStats
+  /** Yesterday's billable request count and consumed platform currency (🌱) */
+  yesterday?: {
+    count: number
+    quota: number
+  }
+  /** Rule A tiers (yesterday request count) */
+  count_tiers?: CheckinTier[]
+  /** Rule B tiers (yesterday spend, in 芽点) */
+  quota_tiers?: CheckinTier[]
+  /** Lifetime spend in internal quota units (rule C input) */
+  total_used_quota?: number
+  /** Rule C configuration */
+  c_enabled?: boolean
+  c_base_threshold?: number
+  c_base_reward?: number
+  c_step_quota?: number
+  c_step_reward?: number
+  c_max_reward?: number
+  /** Award paid when no tier is reached */
+  fallback_reward?: number
 }
 
 /**
