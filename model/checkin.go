@@ -364,8 +364,12 @@ func userCheckinWithTransaction(checkin *Checkin, userId int, quotaAwarded int) 
 		// 步骤2: 在事务中增加用户额度。带上界并对 RowsAffected 校验——0 行
 		// （用户已被软删）必须让事务回滚，否则会留下一条 quota_awarded>0 的签到
 		// 记录与成功响应，但额度从未入账。
+		//
+		// 上界用 common.MaxWalletQuota（钱包自身的额度域），与 SQLite 分支走的
+		// increaseUserQuota 保持同一常量：此前这里用 int32 的 common.MaxQuota，
+		// 导致同一笔签到在 MySQL/PG 上被拒、在 SQLite 上却成功。
 		result := tx.Model(&User{}).
-			Where("id = ? AND quota <= ?", userId, common.MaxQuota-quotaAwarded).
+			Where("id = ? AND quota <= ?", userId, common.MaxWalletQuota-quotaAwarded).
 			Update("quota", gorm.Expr("quota + ?", quotaAwarded))
 		if result.Error != nil {
 			return errors.New("签到失败：更新额度出错")

@@ -18,7 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { parseCurrencyDisplayType } from '@/lib/currency'
 
-import { CheckinSettingsSection } from '../general/checkin-settings-section'
+import {
+  CheckinSettingsSection,
+  type CheckinTierValue,
+} from '../general/checkin-settings-section'
 import { PricingSection } from '../general/pricing-section'
 import { QuotaSettingsSection } from '../general/quota-settings-section'
 import { SelfRefundSettingsSection } from '../general/self-refund-settings-section'
@@ -42,8 +45,7 @@ const getModelDefaults = (settings: BillingSettings) => ({
   PluginBillingExpr: settings['billing_setting.plugin_billing_expr'],
 })
 
-const getGroupDefaults = (settings: BillingSettings) => ({
-  TopupGroupRatio: settings.TopupGroupRatio,
+const getGroupDefaults = (settings: BillingSettings) => ({  TopupGroupRatio: settings.TopupGroupRatio,
   GroupRatio: settings.GroupRatio,
   UserUsableGroups: settings.UserUsableGroups,
   GroupGroupRatio: settings.GroupGroupRatio,
@@ -53,6 +55,32 @@ const getGroupDefaults = (settings: BillingSettings) => ({
   GroupSpecialUsableGroup:
     settings['group_ratio_setting.group_special_usable_group'],
 })
+
+/**
+ * Tier config is stored as a JSON string in the option table. A malformed value
+ * must degrade to "no tiers" rather than crash the settings page — the server's
+ * own Sanitized() already treats a broken tier list as no payout.
+ */
+function parseCheckinTiers(raw: string | undefined): CheckinTierValue[] {
+  if (!raw) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.flatMap((entry) => {
+      if (typeof entry !== 'object' || entry === null) return []
+      const row = entry as Record<string, unknown>
+      return [
+        {
+          threshold: Number(row.threshold ?? 0),
+          min_reward: Number(row.min_reward ?? 0),
+          max_reward: Number(row.max_reward ?? 0),
+        },
+      ]
+    })
+  } catch {
+    return []
+  }
+}
 
 const BILLING_SECTIONS = [
   {
@@ -196,9 +224,25 @@ const BILLING_SECTIONS = [
     build: (settings: BillingSettings) => (
       <CheckinSettingsSection
         defaultValues={{
-          enabled: settings['checkin_setting.enabled'],
-          minQuota: settings['checkin_setting.min_quota'],
-          maxQuota: settings['checkin_setting.max_quota'],
+          enabled: settings['checkin_setting.enabled'] ?? false,
+          count_enabled: settings['checkin_setting.count_enabled'] ?? true,
+          count_tiers: parseCheckinTiers(
+            settings['checkin_setting.count_tiers']
+          ),
+          quota_enabled: settings['checkin_setting.quota_enabled'] ?? true,
+          quota_tiers: parseCheckinTiers(
+            settings['checkin_setting.quota_tiers']
+          ),
+          include_subscription:
+            settings['checkin_setting.include_subscription'] ?? true,
+          c_enabled: settings['checkin_setting.c_enabled'] ?? true,
+          c_base_threshold:
+            settings['checkin_setting.c_base_threshold'] ?? 1000,
+          c_base_reward: settings['checkin_setting.c_base_reward'] ?? 10,
+          c_step_quota: settings['checkin_setting.c_step_quota'] ?? 1000,
+          c_step_reward: settings['checkin_setting.c_step_reward'] ?? 5,
+          c_max_reward: settings['checkin_setting.c_max_reward'] ?? 30,
+          fallback_reward: settings['checkin_setting.fallback_reward'] ?? 5,
         }}
       />
     ),

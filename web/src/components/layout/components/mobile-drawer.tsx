@@ -25,6 +25,7 @@ import {
   ShieldCheck,
   BadgeCheck,
   Banknote,
+  Gift,
 } from 'lucide-react'
 import { AnimatePresence, motion, type Variants } from 'motion/react'
 import { useTranslation } from 'react-i18next'
@@ -159,6 +160,15 @@ function MobileUserProfile({ user, onNavigate }: MobileUserProfileProps) {
         >
           <Banknote className='size-4' />
           {t('Recharge Center')}
+        </Link>
+
+        <Link
+          to='/checkin'
+          onClick={onNavigate}
+          className='text-primary/60 hover:text-primary/80 border-border flex items-center gap-2.5 border-b p-2.5 transition-colors'
+        >
+          <Gift className='size-4' />
+          {t('Daily Check-in')}
         </Link>
 
         <Link

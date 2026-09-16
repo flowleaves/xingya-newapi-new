@@ -25,6 +25,7 @@ import {
   CreditCard,
   FileText,
   FlaskConical,
+  Gift,
   Key,
   LayoutDashboard,
   ListTodo,
@@ -122,6 +123,11 @@ export function useSidebarData(): SidebarData {
             title: t('Recharge Center'),
             url: '/recharge',
             icon: Banknote,
+          },
+          {
+            title: t('Daily Check-in'),
+            url: '/checkin',
+            icon: Gift,
           },
           {
             title: t('Self Refund'),

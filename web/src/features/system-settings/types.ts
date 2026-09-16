@@ -364,8 +364,18 @@ export type BillingSettings = {
   WaffoPancakeStoreID: string
   WaffoPancakeProductID: string
   'checkin_setting.enabled': boolean
-  'checkin_setting.min_quota': number
-  'checkin_setting.max_quota': number
+  'checkin_setting.count_enabled': boolean
+  'checkin_setting.count_tiers': string
+  'checkin_setting.quota_enabled': boolean
+  'checkin_setting.quota_tiers': string
+  'checkin_setting.include_subscription': boolean
+  'checkin_setting.c_enabled': boolean
+  'checkin_setting.c_base_threshold': number
+  'checkin_setting.c_base_reward': number
+  'checkin_setting.c_step_quota': number
+  'checkin_setting.c_step_reward': number
+  'checkin_setting.c_max_reward': number
+  'checkin_setting.fallback_reward': number
   'self_refund_setting.enabled': boolean
   'self_refund_setting.ratio': number
   'self_refund_setting.window_hours': number
