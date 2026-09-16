@@ -27,6 +27,8 @@ import { Route as errors404RouteImport } from './routes/(errors)/404'
 import { Route as errors500RouteImport } from './routes/(errors)/500'
 import { Route as errors503RouteImport } from './routes/(errors)/503'
 import { Route as AuthenticatedChat2linkRouteImport } from './routes/_authenticated/chat2link'
+import { Route as AuthenticatedRechargeRouteImport } from './routes/_authenticated/recharge'
+import { Route as AuthenticatedSelfRefundRouteImport } from './routes/_authenticated/self-refund'
 import { Route as AuthenticatedSystemSettingsRouteRouteImport } from './routes/_authenticated/system-settings/route'
 import { Route as AboutIndexRouteImport } from './routes/about/index'
 import { Route as OauthProviderRouteImport } from './routes/oauth/$provider'
@@ -157,6 +159,16 @@ const errors503Route = errors503RouteImport.update({
 const AuthenticatedChat2linkRoute = AuthenticatedChat2linkRouteImport.update({
   id: '/chat2link',
   path: '/chat2link',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedRechargeRoute = AuthenticatedRechargeRouteImport.update({
+  id: '/recharge',
+  path: '/recharge',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedSelfRefundRoute = AuthenticatedSelfRefundRouteImport.update({
+  id: '/self-refund',
+  path: '/self-refund',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedSystemSettingsRouteRoute =
@@ -426,6 +438,8 @@ export interface FileRoutesByFullPath {
   '/500': typeof errors500Route
   '/503': typeof errors503Route
   '/chat2link': typeof AuthenticatedChat2linkRoute
+  '/recharge': typeof AuthenticatedRechargeRoute
+  '/self-refund': typeof AuthenticatedSelfRefundRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
   '/pricing/': typeof PricingIndexRoute
@@ -486,6 +500,8 @@ export interface FileRoutesByTo {
   '/500': typeof errors500Route
   '/503': typeof errors503Route
   '/chat2link': typeof AuthenticatedChat2linkRoute
+  '/recharge': typeof AuthenticatedRechargeRoute
+  '/self-refund': typeof AuthenticatedSelfRefundRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about': typeof AboutIndexRoute
   '/pricing': typeof PricingIndexRoute
@@ -550,6 +566,8 @@ export interface FileRoutesById {
   '/(errors)/500': typeof errors500Route
   '/(errors)/503': typeof errors503Route
   '/_authenticated/chat2link': typeof AuthenticatedChat2linkRoute
+  '/_authenticated/recharge': typeof AuthenticatedRechargeRoute
+  '/_authenticated/self-refund': typeof AuthenticatedSelfRefundRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
   '/pricing/': typeof PricingIndexRoute
@@ -613,6 +631,8 @@ export interface FileRouteTypes {
     | '/500'
     | '/503'
     | '/chat2link'
+    | '/recharge'
+    | '/self-refund'
     | '/oauth/$provider'
     | '/about/'
     | '/pricing/'
@@ -673,6 +693,8 @@ export interface FileRouteTypes {
     | '/500'
     | '/503'
     | '/chat2link'
+    | '/recharge'
+    | '/self-refund'
     | '/oauth/$provider'
     | '/about'
     | '/pricing'
@@ -736,6 +758,8 @@ export interface FileRouteTypes {
     | '/(errors)/500'
     | '/(errors)/503'
     | '/_authenticated/chat2link'
+    | '/_authenticated/recharge'
+    | '/_authenticated/self-refund'
     | '/oauth/$provider'
     | '/about/'
     | '/pricing/'
@@ -925,6 +949,20 @@ declare module '@tanstack/react-router' {
       path: '/chat2link'
       fullPath: '/chat2link'
       preLoaderRoute: typeof AuthenticatedChat2linkRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/recharge': {
+      id: '/_authenticated/recharge'
+      path: '/recharge'
+      fullPath: '/recharge'
+      preLoaderRoute: typeof AuthenticatedRechargeRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/self-refund': {
+      id: '/_authenticated/self-refund'
+      path: '/self-refund'
+      fullPath: '/self-refund'
+      preLoaderRoute: typeof AuthenticatedSelfRefundRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/system-settings': {
@@ -1317,6 +1355,8 @@ const AuthenticatedSystemSettingsRouteRouteWithChildren =
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedSystemSettingsRouteRoute: typeof AuthenticatedSystemSettingsRouteRouteWithChildren
   AuthenticatedChat2linkRoute: typeof AuthenticatedChat2linkRoute
+  AuthenticatedRechargeRoute: typeof AuthenticatedRechargeRoute
+  AuthenticatedSelfRefundRoute: typeof AuthenticatedSelfRefundRoute
   AuthenticatedChatChatIdRoute: typeof AuthenticatedChatChatIdRoute
   AuthenticatedDashboardSectionRoute: typeof AuthenticatedDashboardSectionRoute
   AuthenticatedErrorsErrorRoute: typeof AuthenticatedErrorsErrorRoute
@@ -1343,6 +1383,8 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedSystemSettingsRouteRoute:
     AuthenticatedSystemSettingsRouteRouteWithChildren,
   AuthenticatedChat2linkRoute: AuthenticatedChat2linkRoute,
+  AuthenticatedRechargeRoute: AuthenticatedRechargeRoute,
+  AuthenticatedSelfRefundRoute: AuthenticatedSelfRefundRoute,
   AuthenticatedChatChatIdRoute: AuthenticatedChatChatIdRoute,
   AuthenticatedDashboardSectionRoute: AuthenticatedDashboardSectionRoute,
   AuthenticatedErrorsErrorRoute: AuthenticatedErrorsErrorRoute,

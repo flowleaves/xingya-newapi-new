@@ -64,6 +64,11 @@ import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { formatBillingCurrencyFromUSD } from '@/lib/currency'
 import { formatLogQuota, formatTokens, formatUseTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
+import { toast } from 'sonner'
+
+import { getRefundable, postRefund } from '../../api'
 
 import { AuditDetailFields } from '../../audit/components/audit-detail-fields'
 import type { UsageLog } from '../../data/schema'
@@ -1234,6 +1239,22 @@ export function DetailsDialog(props: DetailsDialogProps) {
           </DetailSection>
         )}
 
+        {/* Self-Refund Card.
+            Keyed on request_id: the usage-log list rewrites its `id` into a
+            page-relative display index, which must not be sent back as a primary
+            key. The gate below only mirrors the server's own eligibility rules to
+            avoid a pointless request; the card still asks the server for the
+            authoritative amount, and renders nothing when the log is not
+            refundable (already refunded, outside the window, disabled, ...). */}
+        {isConsume &&
+          !isViolation &&
+          props.log.request_id !== '' &&
+          (props.log.completion_tokens === 0 ||
+            (other?.stream_status?.end_reason !== undefined &&
+              TRUNCATING_STREAM_END_REASONS.has(
+                other.stream_status.end_reason
+              ))) && <SelfRefundCard requestId={props.log.request_id} />}
+
         {/* Subscription billing details */}
         {isSubscription && other && (
           <DetailSection label={t('Subscription Billing')}>
@@ -1344,4 +1365,88 @@ export function DetailsDialog(props: DetailsDialogProps) {
 
 function isDisplayableType(type: number): boolean {
   return [0, 2, 5, 6].includes(type)
+}
+
+/**
+ * Stream end reasons the backend treats as a truncated stream worth refunding
+ * (see service.isTruncationEndReason). Duplicated here only as a pre-filter so
+ * the card does not query the server for requests that obviously do not qualify;
+ * the server remains the sole authority on eligibility and amount.
+ */
+const TRUNCATING_STREAM_END_REASONS = new Set([
+  'timeout',
+  'scanner_error',
+  'panic',
+  'ping_fail',
+])
+
+function SelfRefundCard(props: { requestId: string }) {
+  const { t } = useTranslation()
+  const [loading, setLoading] = useState(false)
+  const [done, setDone] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // Ask the server for the authoritative refund amount for this single log. The
+  // amount depends on the configured ratio and funding source, so it must not be
+  // estimated on the client. A log that is not refundable yields no item, and
+  // the card renders nothing.
+  const query = useQuery({
+    queryKey: ['self-refund', 'request', props.requestId],
+    queryFn: () => getRefundable({ requestId: props.requestId }),
+    enabled: props.requestId !== '',
+    staleTime: 30_000,
+  })
+
+  const item = query.data?.data?.logs?.find(
+    (log) => log.request_id === props.requestId
+  )
+  if (!item) return null
+  const formattedAmount = formatLogQuota(item.refund_amount)
+
+  async function handleRefund() {
+    setLoading(true)
+    setError(null)
+    try {
+      const response = await postRefund({ requestId: props.requestId })
+      if (response.success) {
+        setDone(true)
+        toast.success(t('Refund successful'))
+        return
+      }
+      setError(response.message || t('Refund failed'))
+    } catch {
+      setError(t('Refund failed'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <DetailSection
+      icon={<AlertTriangle className='size-3.5' aria-hidden='true' />}
+      iconTone='warning'
+      label={t('Refund Request')}
+    >
+      {done ? (
+        <p className='text-xs text-green-600'>{t('Refund successful')}</p>
+      ) : (
+        <div className='space-y-2'>
+          <p className='text-xs'>{t('This request is eligible for refund')}</p>
+          <div className='flex items-center gap-2'>
+            <Button
+              size='sm'
+              variant='outline'
+              onClick={() => void handleRefund()}
+              disabled={loading}
+            >
+              {loading
+                ? t('Refunding...')
+                : t('Request refund ({{amount}})', { amount: formattedAmount })}
+            </Button>
+          </div>
+          {error && <p className='text-xs text-red-500'>{error}</p>}
+        </div>
+      )}
+    </DetailSection>
+  )
 }

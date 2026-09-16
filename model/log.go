@@ -98,6 +98,25 @@ func ensureLogRequestId(log *Log) {
 	}
 }
 
+// RecordRefundLog 记录一条补回日志（type=6）。quota 存负值，使调用日志费用列显示为 -金额（平台货币）。
+// content 为面向用户的友好描述。补回涉及财务变动，写入失败用 SysError 告警。
+func RecordRefundLog(userId int, refundAmount int, content string) {
+	username, _ := GetUsernameById(userId, false)
+	// 负数表示钱退回用户（节省/退还）
+	quota := -refundAmount
+	log := &Log{
+		UserId:    userId,
+		Username:  username,
+		CreatedAt: common.GetTimestamp(),
+		Type:      LogTypeRefund,
+		Quota:     quota,
+		Content:   content,
+	}
+	if err := createLog(log); err != nil {
+		common.SysError("failed to record refund log: " + err.Error())
+	}
+}
+
 func createLog(log *Log) error {
 	ensureLogRequestId(log)
 	return LOG_DB.Create(log).Error
@@ -736,4 +755,71 @@ func DeleteOldLogBatch(ctx context.Context, targetTimestamp int64, limit int) (i
 		return 0, result.Error
 	}
 	return result.RowsAffected, nil
+}
+
+// GetRefundableCandidates 查询可补回候选日志列表
+// 过滤条件：type=2（消费日志）+ 窗口内 + (completion_tokens=0 OR is_stream=1)
+//
+// OR 组显式加括号：这是多列条件，其余谓词都以 AND 追加，依赖 GORM 的隐式
+// 包裹会让「谁都能查到全部流式日志」取决于库的实现细节。
+//
+// 注意 quota>0 只对钱包来源成立：订阅计费日志的 quota 可能为 0。故此处的
+// quota 过滤刻意不加，交由 service 层的 JudgeSelfRefund 按资金来源精确判定，
+// 否则订阅来源的可补回日志会被 SQL 层直接筛掉。
+func GetRefundableCandidates(userId int, minCreatedAt int64, limit int) ([]*Log, int64, error) {
+	var total int64
+	tx := LOG_DB.Model(&Log{}).
+		Where("user_id = ?", userId).
+		Where("type = ?", LogTypeConsume).
+		Where("created_at >= ?", minCreatedAt).
+		Where("(completion_tokens = 0 OR is_stream = ?)", true)
+	if err := tx.Count(&total).Error; err != nil {
+		common.SysError("failed to count refundable candidates: " + err.Error())
+		return nil, 0, err
+	}
+	order := "id desc"
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		order = clickHouseLogOrder("")
+	}
+	var logs []*Log
+	if err := tx.Order(order).Limit(limit).Find(&logs).Error; err != nil {
+		common.SysError("failed to query refundable candidates: " + err.Error())
+		return nil, 0, err
+	}
+	return logs, total, nil
+}
+
+// GetLogById 根据ID获取单条日志
+func GetLogById(logId int) (*Log, error) {
+	var log Log
+	err := LOG_DB.Where("id = ?", logId).First(&log).Error
+	if err != nil {
+		return nil, err
+	}
+	return &log, nil
+}
+
+// GetLogByRequestId loads a single usage log by its request id, scoped to the
+// owner.
+//
+// Callers reachable from the user-facing log *list* must not use the id that
+// list returned: formatUserLogs rewrites it into a page-relative display index
+// (assignDisplayLogIds), so it is not a primary key. request_id is stable, is
+// already part of the list payload, and is indexed, which makes it the correct
+// key for anything the log list links back into the API.
+//
+// The owner scope is applied in SQL so a caller can never resolve another
+// account's log, even transiently.
+func GetLogByRequestId(userId int, requestId string) (*Log, error) {
+	if requestId == "" || userId <= 0 {
+		return nil, errors.New("invalid log reference")
+	}
+	var log Log
+	err := LOG_DB.Where("user_id = ? AND request_id = ?", userId, requestId).
+		Order("id desc").
+		First(&log).Error
+	if err != nil {
+		return nil, err
+	}
+	return &log, nil
 }

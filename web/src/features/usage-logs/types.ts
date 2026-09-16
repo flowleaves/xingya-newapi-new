@@ -488,3 +488,24 @@ export interface UserInfo {
   aff_quota?: number
   remark?: string
 }
+
+/**
+ * One log the server has judged eligible for a self-refund, together with the
+ * amount it would pay back. Produced by JudgeSelfRefund; the client must never
+ * compute the amount itself, because it depends on the configured ratio and on
+ * the funding source.
+ */
+export interface RefundableLogItem {
+  log_id: number
+  created_at: number
+  model_name: string
+  quota: number
+  base_quota: number
+  /** 'wallet' | 'subscription' */
+  funding_source: string
+  subscription_id: number
+  refund_amount: number
+  /** 'empty_response' | 'stream_truncated' */
+  reason: string
+  request_id: string
+}

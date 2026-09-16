@@ -133,8 +133,10 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.POST("/2fa/backup_codes", middleware.DisableCache(), controller.RegenerateBackupCodes)
 
 				// Check-in routes
+				// POST credits real wallet quota on a tiered schedule, so it is
+				// rate limited per user in addition to the Turnstile check.
 				selfRoute.GET("/checkin", controller.GetCheckinStatus)
-				selfRoute.POST("/checkin", middleware.TurnstileCheck(), controller.DoCheckin)
+				selfRoute.POST("/checkin", middleware.UserCriticalRateLimit("checkin"), middleware.TurnstileCheck(), controller.DoCheckin)
 
 				// Custom OAuth bindings
 				selfRoute.GET("/oauth/bindings", controller.GetUserOAuthBindings)
@@ -316,6 +318,12 @@ func SetApiRouter(router *gin.Engine) {
 		logRoute.GET("/search", middleware.AdminAuth(), controller.SearchAllLogs)
 		logRoute.GET("/self", middleware.UserAuth(), controller.GetUserLogs)
 		logRoute.GET("/self/search", middleware.UserAuth(), middleware.SearchRateLimit(), controller.SearchUserLogs)
+		// Self refund: the user-facing log detail card and the standalone refund
+		// page both read the refundable view; POST re-validates everything from
+		// scratch and never trusts the GET result. It also moves real money, so
+		// it carries a user-level rate limit like the other critical routes.
+		logRoute.GET("/self/refundable", middleware.UserAuth(), controller.GetSelfRefundable)
+		logRoute.POST("/self/refund", middleware.UserAuth(), middleware.UserCriticalRateLimit("self_refund"), controller.DoSelfRefund)
 
 		systemTaskRoute := apiRouter.Group("/system-task")
 		systemTaskRoute.Use(middleware.RootAuth())

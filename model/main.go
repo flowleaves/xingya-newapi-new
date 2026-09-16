@@ -374,6 +374,17 @@ func migrateDB() error {
 	if err != nil {
 		return err
 	}
+
+	// log_refunds is the self-refund idempotency and audit boundary. It is created
+	// only when absent and is deliberately kept out of the AutoMigrate list above:
+	// production already carries the table (plus two historical unique objects on
+	// log_id), and AutoMigrate would otherwise be free to rewrite columns and
+	// indexes on a financial audit table from whatever the Go struct happens to
+	// declare. Adding a table is safe; reshaping an existing one is not.
+	if err := ensureLogRefundTable(DB); err != nil {
+		return err
+	}
+
 	if err := InitializeUserAuthVersions(); err != nil {
 		return err
 	}

@@ -21,6 +21,7 @@ import { parseCurrencyDisplayType } from '@/lib/currency'
 import { CheckinSettingsSection } from '../general/checkin-settings-section'
 import { PricingSection } from '../general/pricing-section'
 import { QuotaSettingsSection } from '../general/quota-settings-section'
+import { SelfRefundSettingsSection } from '../general/self-refund-settings-section'
 import { PaymentSettingsSection } from '../integrations/payment-settings-section'
 import { RatioSettingsCard } from '../models/ratio-settings-card'
 import type { BillingSettings } from '../types'
@@ -198,6 +199,23 @@ const BILLING_SECTIONS = [
           enabled: settings['checkin_setting.enabled'],
           minQuota: settings['checkin_setting.min_quota'],
           maxQuota: settings['checkin_setting.max_quota'],
+        }}
+      />
+    ),
+  },
+  {
+    id: 'self-refund',
+    titleKey: 'Self-Refund Settings',
+    build: (settings: BillingSettings) => (
+      <SelfRefundSettingsSection
+        defaultValues={{
+          enabled: settings['self_refund_setting.enabled'] ?? false,
+          ratio: settings['self_refund_setting.ratio'] ?? 0.5,
+          window_hours: settings['self_refund_setting.window_hours'] ?? 48,
+          daily_max_count: settings['self_refund_setting.daily_max_count'] ?? 3,
+          daily_max_quota: settings['self_refund_setting.daily_max_quota'] ?? 0,
+          min_refund_quota:
+            settings['self_refund_setting.min_refund_quota'] ?? 0,
         }}
       />
     ),

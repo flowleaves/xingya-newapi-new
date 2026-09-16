@@ -107,6 +107,12 @@ const defaultBillingSettings: BillingSettings = {
   'checkin_setting.enabled': false,
   'checkin_setting.min_quota': 1000,
   'checkin_setting.max_quota': 10000,
+  'self_refund_setting.enabled': false,
+  'self_refund_setting.ratio': 0.5,
+  'self_refund_setting.window_hours': 48,
+  'self_refund_setting.daily_max_count': 3,
+  'self_refund_setting.daily_max_quota': 0,
+  'self_refund_setting.min_refund_quota': 0,
 }
 
 export function BillingSettings() {

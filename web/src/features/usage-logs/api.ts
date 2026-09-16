@@ -27,6 +27,7 @@ import type {
   GetLogStatsResponse,
   GetMidjourneyLogsParams,
   GetTaskLogsParams,
+  RefundableLogItem,
   TaskArtifactsResponse,
   UserInfo,
 } from './types'
@@ -124,4 +125,74 @@ export async function getTaskArtifacts(taskId: string) {
     taskArtifactRequestConfig
   )
   return parseTaskArtifactsResponse(response.data)
+}
+
+// ============================================================================
+// Self-Refund API
+// ============================================================================
+
+export interface GetRefundableResponse {
+  success: boolean
+  message: string
+  data: {
+    setting: {
+      enabled: boolean
+      ratio: number
+      window_hours: number
+      daily_max_count: number
+      daily_max_quota: number
+      min_refund_quota: number
+      total_used: {
+        count: number
+        quota: number
+      }
+    }
+    logs: RefundableLogItem[]
+    /** Candidate rows the server matched, before per-row eligibility judgment. */
+    total: number
+  }
+}
+
+export interface PostRefundResponse {
+  success: boolean
+  message: string
+  data?: RefundableLogItem
+}
+
+// Selector for the self-refund endpoints. Kept as an explicit union so every call
+// site has to state which kind of key it holds:
+//   - requestId: the identifier the user-facing usage-log list carries.
+//   - logId: the real primary key, handed out by /api/log/self/refundable.
+//
+// The list's `id` must never be sent as log_id: the backend rewrites it into a
+// page-relative display index (model.formatUserLogs), so it would resolve to a
+// different row.
+export type RefundSelector = { requestId: string } | { logId: number }
+
+function toRefundParams(
+  selector?: RefundSelector
+): Record<string, unknown> | undefined {
+  if (!selector) return undefined
+  return 'requestId' in selector
+    ? { request_id: selector.requestId }
+    : { log_id: selector.logId }
+}
+
+export const getRefundable = async (
+  selector?: RefundSelector
+): Promise<GetRefundableResponse> => {
+  const response = await api.get('/api/log/self/refundable', {
+    params: toRefundParams(selector),
+  })
+  return response.data
+}
+
+export const postRefund = async (
+  selector: RefundSelector
+): Promise<PostRefundResponse> => {
+  const response = await api.post(
+    '/api/log/self/refund',
+    toRefundParams(selector)
+  )
+  return response.data
 }

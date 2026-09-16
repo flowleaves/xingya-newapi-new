@@ -16,17 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-/**
- * Application-wide constants
- */
+import { createFileRoute } from '@tanstack/react-router'
 
-// System Configuration Defaults
-export const DEFAULT_SYSTEM_NAME = '星芽'
-export const DEFAULT_LOGO = '/logo.png'
+import { SelfRefundPage } from '@/features/usage-logs/components/self-refund-page'
 
-// LocalStorage Keys
-export const STORAGE_KEYS = {
-  SYSTEM_NAME: 'system_name',
-  LOGO: 'logo',
-  FOOTER_HTML: 'footer_html',
-} as const
+export const Route = createFileRoute('/_authenticated/self-refund')({
+  component: SelfRefundPage,
+})

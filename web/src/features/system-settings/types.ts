@@ -366,6 +366,12 @@ export type BillingSettings = {
   'checkin_setting.enabled': boolean
   'checkin_setting.min_quota': number
   'checkin_setting.max_quota': number
+  'self_refund_setting.enabled': boolean
+  'self_refund_setting.ratio': number
+  'self_refund_setting.window_hours': number
+  'self_refund_setting.daily_max_count': number
+  'self_refund_setting.daily_max_quota': number
+  'self_refund_setting.min_refund_quota': number
 }
 
 export type OperationsSettings = {

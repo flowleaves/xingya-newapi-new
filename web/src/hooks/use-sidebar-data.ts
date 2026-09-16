@@ -18,6 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   Activity,
+  BadgeCheck,
+  Banknote,
   Box,
   ClipboardList,
   CreditCard,
@@ -115,6 +117,16 @@ export function useSidebarData(): SidebarData {
             title: t('Wallet'),
             url: '/wallet',
             icon: Wallet,
+          },
+          {
+            title: t('Recharge Center'),
+            url: '/recharge',
+            icon: Banknote,
+          },
+          {
+            title: t('Self Refund'),
+            url: '/self-refund',
+            icon: BadgeCheck,
           },
           {
             title: t('Profile'),
