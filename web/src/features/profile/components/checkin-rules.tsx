@@ -20,18 +20,30 @@ import { useTranslation } from 'react-i18next'
 
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
+import {
+  DEFAULT_CURRENCY_CONFIG,
+  useSystemConfigStore,
+} from '@/stores/system-config-store'
 
 import type { CheckinStatusResponse, CheckinTier } from '../types'
 
-/**
- * Internal-quota units per unit of platform currency (1 🌱 = 5000 internal).
- * Mirrors model.checkinQuotaPerTier(); the server reports raw internal units in
- * `yesterday.quota` and `total_used_quota`, so the display has to convert.
- */
-const QUOTA_PER_TIER = 5000
-
 /** Highest number of rule-C tiers to render before stopping. */
 const MAX_C_TIER_LEVELS = 10
+
+/**
+ * Internal-quota units per unit of platform currency, mirroring the server's
+ * model.checkinQuotaPerTier() so the displayed tier never diverges from the
+ * payout: the server uses `common.QuotaPerUnit / 100`, and the admin-facing
+ * QuotaPerUnit reaches the client as the persisted currency config. Rules B and
+ * C compare tier counts, so the rate has to be derived rather than assumed.
+ */
+function quotaPerTier(quotaPerUnit: number): number {
+  const perUnit =
+    Number.isFinite(quotaPerUnit) && quotaPerUnit > 0
+      ? quotaPerUnit
+      : DEFAULT_CURRENCY_CONFIG.quotaPerUnit
+  return perUnit / 100
+}
 
 function renderRange(min: number, max: number): string {
   return `🌱${Number(min).toFixed(2)} ~ 🌱${Number(max).toFixed(2)}`
@@ -142,10 +154,12 @@ export function CheckinRules(props: {
 }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const quotaPerUnit = useSystemConfigStore((s) => s.config.currency.quotaPerUnit)
+  const perTier = quotaPerTier(quotaPerUnit)
 
   const count = props.checkinData?.yesterday?.count ?? 0
   const quota = props.checkinData?.yesterday?.quota ?? 0
-  const quotaTier = Math.floor(quota / QUOTA_PER_TIER)
+  const quotaTier = Math.floor(quota / perTier)
   const countTiers = props.checkinData?.count_tiers ?? []
   const quotaTiers = props.checkinData?.quota_tiers ?? []
   const fallback = props.checkinData?.fallback_reward ?? 0
@@ -154,7 +168,7 @@ export function CheckinRules(props: {
   const anyQuotaReached = quotaTiers.some((tier) => quotaTier >= tier.threshold)
 
   const usedQuotaTier = Math.floor(
-    (props.checkinData?.total_used_quota ?? 0) / QUOTA_PER_TIER
+    (props.checkinData?.total_used_quota ?? 0) / perTier
   )
   const cEnabled = props.checkinData?.c_enabled ?? false
   const cBaseThreshold = props.checkinData?.c_base_threshold ?? 1000
