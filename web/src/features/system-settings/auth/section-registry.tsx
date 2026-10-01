@@ -111,6 +111,10 @@ const AUTH_SECTIONS = [
           TurnstileCheckEnabled: settings.TurnstileCheckEnabled,
           TurnstileSiteKey: settings.TurnstileSiteKey,
           TurnstileSecretKey: settings.TurnstileSecretKey,
+          RegistrationDeviceLimitEnabled:
+            settings.RegistrationDeviceLimitEnabled,
+          RegistrationDeviceLimitWhitelist:
+            settings.RegistrationDeviceLimitWhitelist,
         }}
       />
     ),

@@ -1,5 +1,80 @@
 # CHANGELOG — 星芽 NewAPI
 
+## v2.0.0-rc42（注册防刷 + 邀请奖励延迟发放）
+
+> 在 `v2.0.0-rc41` 基础上新增两项风控功能：**同设备注册限制**（F1）与
+> **邀请奖励延迟发放**（F2）。原来的「注册即发双份额度」对刷号毫无成本，
+> 这两项改动把发奖条件与「真实使用」绑定。
+
+### 功能一 · 同设备注册限制（F1）
+
+| 项 | 说明 |
+|---|---|
+| 判定 | 7 天内同一 **精确客户端地址** 命中即拒绝；IPv6 额外按 **/64 前缀 + 相同 User-Agent** 命中拒绝 |
+| IPv4 不按网段判定 | `/24` 覆盖整片共享出口（CGNAT / 校园网），按网段拒绝会在第一个用户注册后封掉整段正常用户，故 IPv4 只做精确匹配 |
+| 存储 | 新表 `xingya_registration_devices`：地址只存 **HMAC 摘要**，前缀存掩码后的网段，另存截断 UA 与 UA 摘要 |
+| 密钥轮换 | 记录带 `secret_version`（当前 `CRYPTO_SECRET`/`SESSION_SECRET` 的摘要）。轮换后旧记录不再参与比较，既不会误拦也不会静默失效 |
+| 开关 | `RegistrationDeviceLimitEnabled`（**默认关闭**，上线后手动开启）+ `RegistrationDeviceLimitWhitelist`（地址 / CIDR 白名单） |
+| 接入 | 口令注册、OAuth 注册、微信注册；**管理员后台建号豁免**（否则运维无法补号） |
+| 排障 | 新增 `GET /api/user/:id/registration`（管理员只读），返回网段 / 摘要 / UA / 注册时间 |
+| 清理 | 记录保留 180 天 |
+
+### 功能二 · 邀请奖励延迟发放（F2）
+
+| 项 | 说明 |
+|---|---|
+| 变更前 | 注册瞬间给邀请人与被邀请人**同时**发放额度 |
+| 变更后 | 注册只写入一条 `pending` 承诺；由定时任务在**被邀请人注册满 24 小时后完成 5 次成功计费调用**时发放 |
+| 条件语义 | 24 小时窗口**作用在调用上**：只有注册满 24 小时之后发生的成功结算才推进计数（`users.success_calls_after_invite_window`）。这样「注册当天猛打 5 次」无法把奖励套出来 |
+| 幂等 | `xingya_invite_reward_pending.invitee_id` 唯一索引 + 行锁 + `state` 校验三重保证，重复运行不重复发放 |
+| 额度快照 | 两份额度在注册时快照，事后修改 `QuotaForInviter`/`QuotaForInvitee` 不会改写已承诺的奖励 |
+| 降级 | 被邀请人已注销 → 记为 `cancelled`；邀请人已注销 → 仍发被邀请人那份并记录说明，避免永久 pending |
+| 调度 | 复用系统任务框架（`SystemTaskTypeInviteReward`），`Enabled()` 折叠「是否有到期记录」，空闲系统不建任务行 |
+| 排障 | 新增 `GET /api/user/invite_rewards/`（管理员只读，可按 state 过滤） |
+
+### 新增数据对象
+
+| 类型 | 名称 | 建表方式 |
+|---|---|---|
+| 新表 | `xingya_registration_devices` | `ensureXingyaTables`（**不进 `AutoMigrate`**） |
+| 新表 | `xingya_invite_reward_pending` | 同上 |
+| 新列 | `users.success_calls_after_invite_window` | 走 `AutoMigrate`（`users` 本就在迁移列表中） |
+
+新表沿用 `log_refunds` 的既有约定：**只在表不存在时创建，绝不交给上游迁移器重塑**。
+rc41 新增的 `MigrateColumnUnique` 会在 `ACCESS EXCLUSIVE` 锁下删除单列唯一约束，
+星芽自有表没有理由进入那条路径。
+
+### 未外泄保证
+
+新增的用户列 **不会**出现在任何接口响应中：`model/user.go` 的三处管理员查询
+（`GetAllUsers` / `SearchUsers` / `GetUserById`）统一改用共享的 `userSecretColumns`
+排除列表，`GetSelfUserById` 本就是显式字段白名单。已加回归测试断言。
+
+### 缓存世代
+
+`userCacheSchemaVersion` `2` → `3`。该值是用户缓存的 CAS 世代号；递增使旧结构缓存
+条目失效并回源数据库，避免新旧结构混用。
+
+### 验证状态
+
+| 项 | 状态 |
+|---|---|
+| 后端 `go build ./...` | ✅ |
+| `relaykit` 独立构建（`GOWORK=off`） | ✅ |
+| `go vet`（model / controller / middleware） | ✅ |
+| `gofmt -l` | ✅ 干净 |
+| 新增后端测试（`model` / `controller`） | ✅ 全通过 |
+| 关键窗口规则**变异验证** | ✅ 去掉 24 小时门控后测试确实失败 |
+| 前端 `typecheck` | ✅ |
+| 改动文件 lint | ✅ 0 error / 0 warning |
+| 改动前端测试 | ✅ |
+| **PostgreSQL 实跑** | ❌ **用户明确取消本机数据库验证，改为仅功能验证**（另注：rc41 的「无 `SeCreateGlobalPrivilege`」结论已复核为**不成立**，本机该权限可用） |
+| **MySQL 实跑** | ❌ 用户取消 |
+
+> ⚠️ 因此按 `AGENTS.md` 要求，**不得声明三库兼容已验证**。本次仅完成功能验证与
+> 三库兼容的**代码级审计**（新增 DDL 为同构表 + 一列，`CASE WHEN` 与复合索引在
+> SQLite / MySQL / PostgreSQL 上语法一致；无 dialect 分支）。
+
 ## v2.0.0-rc41（上游跟进版）
 
 > 在 `v2.0.0-rc37` 基础上把上游基线从 **`v1.0.0-rc.37`（`385d2dfd`）** 跟进到

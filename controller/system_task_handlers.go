@@ -22,6 +22,36 @@ func RegisterScheduledSystemTasks() {
 	service.RegisterSystemTaskHandler(modelUpdateHandler{})
 	service.RegisterSystemTaskHandler(midjourneyPollHandler{})
 	service.RegisterSystemTaskHandler(asyncTaskPollHandler{})
+	service.RegisterSystemTaskHandler(inviteRewardHandler{})
+}
+
+// inviteRewardHandler settles the deferred invite rewards.
+//
+// Registration no longer pays the invite reward; it records a promise. This job is what
+// turns a promise into quota once the invitee has been registered for at least the
+// qualifying window and has completed enough successful calls. The 24-hour wait is why
+// this is a scheduled pass rather than a hook on the invitee's next request: an invitee
+// who reaches the call count before the window elapses has no later request to trigger
+// a lazy check, so the reward would otherwise never be paid.
+type inviteRewardHandler struct{}
+
+func (inviteRewardHandler) Type() string { return model.SystemTaskTypeInviteReward }
+
+// Enabled folds the "is there anything to settle?" check into enablement, following the
+// polling handlers below, so an idle system schedules no task row at all.
+func (inviteRewardHandler) Enabled() bool { return model.HasPendingInviteReward() }
+
+func (inviteRewardHandler) Interval() time.Duration { return 5 * time.Minute }
+
+func (inviteRewardHandler) NewPayload() any { return nil }
+
+func (inviteRewardHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	summary, err := runInviteRewardTask(ctx)
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+		return
+	}
+	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)
 }
 
 // channelTestHandler runs the scheduled "test all channels" job. Enablement and

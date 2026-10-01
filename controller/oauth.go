@@ -335,6 +335,8 @@ func handleOAuthLogin(c *gin.Context, provider oauth.Provider, oauthUser *oauth.
 			common.ApiErrorI18n(c, i18n.MsgUserRegisterDisabled)
 		case *OAuthEmailAlreadyTakenError:
 			common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
+		case *OAuthRegistrationDeviceLimitedError:
+			common.ApiErrorI18n(c, i18n.MsgUserRegisterDeviceLimited)
 		case *OAuthLegacyBindingNotConfirmedError:
 			common.ApiErrorI18n(c, i18n.MsgOAuthNotAutoLinked, providerParams(provider.GetName()))
 		default:
@@ -526,6 +528,12 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 	if affiliateCode != "" {
 		inviterId, _ = model.GetUserIdByAffCode(affiliateCode)
 	}
+	if err := model.GuardRegistrationDevice(nil, c.ClientIP(), c.Request.UserAgent()); err != nil {
+		if errors.Is(err, model.ErrRegistrationDeviceLimited) {
+			return nil, nil, &OAuthRegistrationDeviceLimitedError{}
+		}
+		return nil, nil, err
+	}
 
 	// Use transaction to ensure user creation and OAuth binding are atomic
 	if genericProvider, ok := provider.(*oauth.GenericOAuthProvider); ok {
@@ -546,7 +554,7 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 				return err
 			}
 
-			return nil
+			return model.RecordRegistrationDevice(tx, user.Id, c.ClientIP(), c.Request.UserAgent())
 		})
 		if err != nil {
 			return nil, nil, err
@@ -575,7 +583,7 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 				return err
 			}
 
-			return nil
+			return model.RecordRegistrationDevice(tx, user.Id, c.ClientIP(), c.Request.UserAgent())
 		})
 		if err != nil {
 			return nil, nil, err
@@ -623,6 +631,15 @@ type OAuthLegacyBindingNotConfirmedError struct{}
 
 func (e *OAuthLegacyBindingNotConfirmedError) Error() string {
 	return "legacy binding was not confirmed"
+}
+
+// OAuthRegistrationDeviceLimitedError reports a first-time OAuth sign-in that was refused
+// because the same device had already registered an account inside the deduplication
+// window.
+type OAuthRegistrationDeviceLimitedError struct{}
+
+func (e *OAuthRegistrationDeviceLimitedError) Error() string {
+	return "registration device limit reached"
 }
 
 // handleOAuthError handles OAuth errors and returns translated message

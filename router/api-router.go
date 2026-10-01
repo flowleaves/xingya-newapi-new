@@ -172,6 +172,9 @@ func SetApiRouter(router *gin.Engine) {
 				// Admin 2FA routes
 				adminRoute.GET("/2fa/stats", controller.Admin2FAStats)
 				adminRoute.DELETE("/:id/2fa", controller.AdminDisable2FA)
+				// Device signals recorded for a registration, for diagnosing the
+				// same-device registration limit.
+				adminRoute.GET("/:id/registration", controller.AdminGetRegistrationDevice)
 			}
 		}
 
@@ -204,6 +207,14 @@ func SetApiRouter(router *gin.Engine) {
 			subscriptionAdminRoute.POST("/users/:id/subscriptions/reset", controller.AdminResetUserSubscriptionsByPlan)
 			subscriptionAdminRoute.POST("/user_subscriptions/:id/invalidate", controller.AdminInvalidateUserSubscription)
 			subscriptionAdminRoute.DELETE("/user_subscriptions/:id", controller.AdminDeleteUserSubscription)
+		}
+
+		// Deferred invite rewards are a promise the platform owes, so support needs to
+		// see which ones are still waiting on an invitee and which were closed unpaid.
+		inviteRewardAdminRoute := apiRouter.Group("/user/invite_rewards")
+		inviteRewardAdminRoute.Use(middleware.AdminAuth())
+		{
+			inviteRewardAdminRoute.GET("/", controller.AdminListInviteRewards)
 		}
 
 		// Subscription payment callbacks (no auth)

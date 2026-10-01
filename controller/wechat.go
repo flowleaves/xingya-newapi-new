@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
@@ -98,12 +99,24 @@ func WeChatAuth(c *gin.Context) {
 			user.Role = common.RoleCommonUser
 			user.Status = common.UserStatusEnabled
 
+			if err := model.GuardRegistrationDevice(nil, c.ClientIP(), c.Request.UserAgent()); err != nil {
+				if errors.Is(err, model.ErrRegistrationDeviceLimited) {
+					common.ApiErrorI18n(c, i18n.MsgUserRegisterDeviceLimited)
+					return
+				}
+				common.ApiError(c, err)
+				return
+			}
 			if err := user.Insert(0); err != nil {
 				c.JSON(http.StatusOK, gin.H{
 					"success": false,
 					"message": err.Error(),
 				})
 				return
+			}
+			// A failure to record the device must not reject an account that was created.
+			if err := model.RecordRegistrationDevice(nil, user.Id, c.ClientIP(), c.Request.UserAgent()); err != nil {
+				common.SysLog("failed to record registration device: " + err.Error())
 			}
 		} else {
 			c.JSON(http.StatusOK, gin.H{

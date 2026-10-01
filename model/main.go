@@ -278,6 +278,15 @@ func InitLogDB() (err error) {
 
 var userQuotaColumns = []string{"quota", "used_quota", "aff_quota", "aff_history"}
 
+// userSecretColumns are the user columns that must never leave the backend.
+//
+// password holds the credential hash, access_token is the deprecated dashboard token,
+// and success_calls_after_invite_window is internal bookkeeping for the deferred invite
+// reward. They are listed together so that a new administrative user query cannot
+// expose one of them by forgetting an Omit, and so that a new internal counter has an
+// obvious place to be registered.
+var userSecretColumns = []string{"password", "access_token", "success_calls_after_invite_window"}
+
 // ensureUserQuotaColumns rejects a legacy 32-bit wallet schema before any
 // migrations run. The 64-bit-only build intentionally does not auto-upgrade
 // an existing wallet; operators must migrate it explicitly before starting.
@@ -387,7 +396,10 @@ func migrateDB() error {
 	// log_id), and AutoMigrate would otherwise be free to rewrite columns and
 	// indexes on a financial audit table from whatever the Go struct happens to
 	// declare. Adding a table is safe; reshaping an existing one is not.
-	if err := ensureLogRefundTable(DB); err != nil {
+	//
+	// The same rule covers the rest of the Xingya-owned tables, which upstream has no
+	// reason to inspect.
+	if err := ensureXingyaTables(DB); err != nil {
 		return err
 	}
 

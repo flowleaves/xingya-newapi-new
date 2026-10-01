@@ -112,6 +112,14 @@ type User struct {
 	LastLoginAt          int64                      `json:"last_login_at" gorm:"default:0;column:last_login_at"`
 	AuthVersion          int64                      `json:"-" gorm:"type:bigint;not null;default:1;column:auth_version"`
 	AdminPermissions     map[string]map[string]bool `json:"admin_permissions,omitempty" gorm:"-:all"`
+
+	// SuccessCallsAfterInviteWindow counts successful billable settlements that
+	// happened at least the invite-reward window after this account was registered.
+	// The deferred invite reward requires InviteRewardRequiredCalls of them, which is
+	// what stops a farming account from qualifying by spending a burst of calls
+	// immediately after registering. It is not user-visible and never leaves the
+	// backend, so it stays out of the user projections and API responses.
+	SuccessCallsAfterInviteWindow int `json:"-" gorm:"type:int;not null;default:0;column:success_calls_after_invite_window"`
 }
 
 func (user *User) ToBaseUser() *UserBase {
@@ -421,7 +429,7 @@ func GetAllUsers(pageInfo *common.PageInfo, sortOptions ...UserSortOptions) (use
 
 	// Get paginated users within same transaction
 	order := resolveUserSortOptions(sortOptions)
-	err = order.Apply(tx.Unscoped()).Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Omit("password", "access_token").Find(&users).Error
+	err = order.Apply(tx.Unscoped()).Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Omit(userSecretColumns...).Find(&users).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
@@ -490,7 +498,7 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 
 	// 获取分页数据
 	order := resolveUserSortOptions(sortOptions)
-	err = order.Apply(query.Omit("password", "access_token")).Limit(num).Offset(startIdx).Find(&users).Error
+	err = order.Apply(query.Omit(userSecretColumns...)).Limit(num).Offset(startIdx).Find(&users).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
@@ -513,7 +521,7 @@ func GetUserById(id int, selectAll bool) (*User, error) {
 	if selectAll {
 		err = DB.First(&user, "id = ?", id).Error
 	} else {
-		err = DB.Omit("password", "access_token").First(&user, "id = ?", id).Error
+		err = DB.Omit(userSecretColumns...).First(&user, "id = ?", id).Error
 	}
 	return &user, err
 }
@@ -570,7 +578,14 @@ func HardDeleteUserById(id int) (int64, error) {
 }
 
 func inviteUser(inviterId int) error {
-	result := DB.Model(&User{}).Where("id = ?", inviterId).Updates(map[string]any{
+	return inviteUserTx(DB, inviterId)
+}
+
+// inviteUserTx credits the inviter's affiliate counters through the caller's handle,
+// so the deferred invite reward can pay the inviter inside the settlement transaction
+// rather than through the package-global DB.
+func inviteUserTx(tx *gorm.DB, inviterId int) error {
+	result := tx.Model(&User{}).Where("id = ?", inviterId).Updates(map[string]any{
 		"aff_count":   gorm.Expr("aff_count + ?", 1),
 		"aff_quota":   gorm.Expr("aff_quota + ?", common.QuotaForInviter),
 		"aff_history": gorm.Expr("aff_history + ?", common.QuotaForInviter),
@@ -717,16 +732,23 @@ func (user *User) finishInsert(inviterId int) {
 	if common.QuotaForNewUser > 0 {
 		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
 	}
-	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
-		if common.QuotaForInvitee > 0 {
-			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
-			RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)))
-		}
-		if common.QuotaForInviter > 0 {
-			//_ = IncreaseUserQuota(inviterId, common.QuotaForInviter)
-			RecordLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(common.QuotaForInviter)))
-			_ = inviteUser(inviterId)
-		}
+	grantDeferredInviteReward(user.Id, inviterId)
+}
+
+// grantDeferredInviteReward records the invited registration that will earn the invite
+// reward once the invitee qualifies.
+//
+// The reward used to be paid here, at registration, to both sides at once. It is now
+// only promised: the invitee must still be around after 24 hours and have completed
+// the required number of successful calls, which is checked by the scheduled settlement
+// pass. A failure to record the promise must not reject an account that has already
+// been created, so it is logged rather than returned.
+func grantDeferredInviteReward(inviteeId int, inviterId int) {
+	if inviterId == 0 || !operation_setting.IsPaymentComplianceConfirmed() {
+		return
+	}
+	if err := CreateInviteRewardPending(inviteeId, inviterId); err != nil {
+		common.SysError(fmt.Sprintf("failed to record deferred invite reward for user %d: %v", inviteeId, err))
 	}
 }
 
@@ -774,16 +796,7 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 	if common.QuotaForNewUser > 0 {
 		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
 	}
-	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
-		if common.QuotaForInvitee > 0 {
-			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
-			RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)))
-		}
-		if common.QuotaForInviter > 0 {
-			RecordLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(common.QuotaForInviter)))
-			_ = inviteUser(inviterId)
-		}
-	}
+	grantDeferredInviteReward(user.Id, inviterId)
 }
 
 func (user *User) Update(updatePassword bool) error {
@@ -1353,7 +1366,7 @@ func IncreaseUserQuota(id int, quota int, db bool) (err error) {
 		})
 		return nil
 	}
-	if err := increaseUserQuota(id, quota); err != nil {
+	if err := increaseUserQuotaTx(DB, id, quota); err != nil {
 		return err
 	}
 	gopool.Go(func() {
@@ -1364,8 +1377,15 @@ func IncreaseUserQuota(id int, quota int, db bool) (err error) {
 	return nil
 }
 
-func increaseUserQuota(id int, quota int) (err error) {
-	result := DB.Model(&User{}).
+// increaseUserQuotaTx credits a wallet through the caller's handle, under the same
+// ceiling the plain credit path enforces.
+//
+// Taking the handle explicitly lets a caller credit inside its own transaction. The
+// deferred invite reward needs that: the credit and the reward row's state change must
+// commit or roll back together, and writing the credit through the package-global DB
+// would leave it committed even when the surrounding settlement fails.
+func increaseUserQuotaTx(tx *gorm.DB, id int, quota int) (err error) {
+	result := tx.Model(&User{}).
 		Where("id = ? AND quota <= ?", id, common.MaxWalletQuota-quota).
 		Update("quota", gorm.Expr("quota + ?", quota))
 	if result.Error != nil {
@@ -1375,7 +1395,7 @@ func increaseUserQuota(id int, quota int) (err error) {
 		return nil
 	}
 	var count int64
-	if err := DB.Model(&User{}).Where("id = ?", id).Count(&count).Error; err != nil {
+	if err := tx.Model(&User{}).Where("id = ?", id).Count(&count).Error; err != nil {
 		return err
 	}
 	if count == 0 {
@@ -1436,10 +1456,19 @@ func UpdateUserLastLoginAt(id int) {
 	}
 }
 
+// UpdateUserUsedQuotaAndRequestCount applies one successful billable settlement.
+//
+// This is the counting point for the deferred invite reward. A settled, billable
+// request is what counts as a "successful call", so errors, rejections and never-billed
+// requests cannot advance an invitee toward qualifying. The Grok violation-fee path
+// (service/violation_fee.go) also calls this function, but a violated request reports
+// zero total tokens, and PostConsumeQuota zeroes the quota and skips the counter update
+// in that case, so a penalty can never stand in for a successful call.
 func UpdateUserUsedQuotaAndRequestCount(id int, quota int) {
 	if common.BatchUpdateEnabled {
 		addNewRecord(BatchUpdateTypeUsedQuota, id, quota)
 		addNewRecord(BatchUpdateTypeRequestCount, id, 1)
+		addNewRecord(BatchUpdateTypeInviteCall, id, 1)
 		return
 	}
 	updateUserUsedQuotaAndRequestCount(id, quota, 1)
@@ -1456,11 +1485,26 @@ func UpdateUserUsedQuota(id int, quota int) {
 	}
 }
 
+// inviteCallCreditExpr builds the SQL fragment that advances the deferred invite
+// reward's qualifying-call counter.
+//
+// The 24-hour gate lives inside the statement rather than in Go because this runs in
+// the settlement path under concurrency. A read-then-write would let two settled
+// requests both observe the pre-window state, and splitting it out would add a second
+// statement plus a lock ordering constraint on the hottest table in the system. The
+// CASE is portable across the three supported databases.
+func inviteCallCreditExpr() string {
+	return "success_calls_after_invite_window + CASE WHEN created_at <= ? THEN 1 ELSE 0 END"
+}
+
+// updateUserUsedQuotaAndRequestCount applies one successful settlement to the user's
+// counters, including the deferred invite reward's qualifying-call counter.
 func updateUserUsedQuotaAndRequestCount(id int, quota int, count int) {
 	err := DB.Model(&User{}).Where("id = ?", id).Updates(
 		map[string]any{
-			"used_quota":    gorm.Expr("used_quota + ?", quota),
-			"request_count": gorm.Expr("request_count + ?", count),
+			"used_quota":                        gorm.Expr("used_quota + ?", quota),
+			"request_count":                     gorm.Expr("request_count + ?", count),
+			"success_calls_after_invite_window": gorm.Expr(inviteCallCreditExpr(), common.GetTimestamp()-inviteRewardWindowSeconds),
 		},
 	).Error
 	if err != nil {
@@ -1481,9 +1525,10 @@ func updateUserQuotaUsedQuotaAndRequestCount(id int, quota int, usedQuota int, r
 
 	err := DB.Model(&User{}).Where("id = ?", id).Updates(
 		map[string]any{
-			"quota":         gorm.Expr("quota + ?", quota),
-			"used_quota":    gorm.Expr("used_quota + ?", usedQuota),
-			"request_count": gorm.Expr("request_count + ?", requestCount),
+			"quota":                             gorm.Expr("quota + ?", quota),
+			"used_quota":                        gorm.Expr("used_quota + ?", usedQuota),
+			"request_count":                     gorm.Expr("request_count + ?", requestCount),
+			"success_calls_after_invite_window": gorm.Expr(inviteCallCreditExpr(), common.GetTimestamp()-inviteRewardWindowSeconds),
 		},
 	).Error
 	if err != nil {

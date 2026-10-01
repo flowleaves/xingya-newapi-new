@@ -273,6 +273,14 @@ func Register(c *gin.Context) {
 	}
 	affCode := user.AffCode // this code is the inviter's code, not the user's own code
 	inviterId, _ := model.GetUserIdByAffCode(affCode)
+	if err := model.GuardRegistrationDevice(nil, c.ClientIP(), c.Request.UserAgent()); err != nil {
+		if errors.Is(err, model.ErrRegistrationDeviceLimited) {
+			common.ApiErrorI18n(c, i18n.MsgUserRegisterDeviceLimited)
+			return
+		}
+		common.ApiError(c, err)
+		return
+	}
 	cleanUser := model.User{
 		Username:    user.Username,
 		Password:    user.Password,
@@ -297,6 +305,11 @@ func Register(c *gin.Context) {
 	if err := model.DB.Where("username = ?", cleanUser.Username).First(&insertedUser).Error; err != nil {
 		common.ApiErrorI18n(c, i18n.MsgUserRegisterFailed)
 		return
+	}
+	// Record the device only after the account exists; a failure here must not reject a
+	// registration that already succeeded.
+	if err := model.RecordRegistrationDevice(nil, insertedUser.Id, c.ClientIP(), c.Request.UserAgent()); err != nil {
+		common.SysLog("failed to record registration device: " + err.Error())
 	}
 	// 生成默认令牌
 	if constant.GenerateDefaultToken {

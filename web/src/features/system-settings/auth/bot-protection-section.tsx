@@ -47,6 +47,8 @@ const botProtectionSchema = z.object({
   TurnstileCheckEnabled: z.boolean(),
   TurnstileSiteKey: z.string().optional(),
   TurnstileSecretKey: z.string().optional(),
+  RegistrationDeviceLimitEnabled: z.boolean(),
+  RegistrationDeviceLimitWhitelist: z.string().optional(),
 })
 
 type BotProtectionFormValues = z.infer<typeof botProtectionSchema>
@@ -144,6 +146,54 @@ export function BotProtectionSection({
                     {...field}
                   />
                 </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='RegistrationDeviceLimitEnabled'
+            render={({ field }) => (
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>
+                    {t('Limit one registration per device')}
+                  </FormLabel>
+                  <FormDescription>
+                    {t(
+                      'Refuse a second registration from the same address or device within 7 days'
+                    )}
+                  </FormDescription>
+                </SettingsSwitchContent>
+                <FormControl>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+              </SettingsSwitchItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='RegistrationDeviceLimitWhitelist'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Exempt addresses')}</FormLabel>
+                <FormControl>
+                  <Input
+                    placeholder={t('192.168.1.10, 10.0.0.0/8')}
+                    autoComplete='off'
+                    {...field}
+                  />
+                </FormControl>
+                <FormDescription>
+                  {t(
+                    'Comma-separated addresses or CIDR ranges that may always register'
+                  )}
+                </FormDescription>
                 <FormMessage />
               </FormItem>
             )}

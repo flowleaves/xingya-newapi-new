@@ -11,7 +11,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const userCacheSchemaVersion = 2
+// userCacheSchemaVersion is the generation number of the cached user shape, not a
+// record of which columns exist. Bumped when a user column is added so that hashes
+// written by an older build are treated as stale and re-read from the database rather
+// than being served as a complete user.
+const userCacheSchemaVersion = 3
 
 type UserBase struct {
 	Id          int    `json:"id"`

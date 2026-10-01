@@ -19,6 +19,7 @@ const (
 	BatchUpdateTypeUsedQuota
 	BatchUpdateTypeChannelUsedQuota
 	BatchUpdateTypeRequestCount
+	BatchUpdateTypeInviteCall
 	BatchUpdateTypeCount // if you add a new type, you need to add a new map and a new lock
 )
 
@@ -89,7 +90,7 @@ func batchUpdate() {
 	}
 
 	for i, store := range stores {
-		if i == BatchUpdateTypeUserQuota || i == BatchUpdateTypeUsedQuota || i == BatchUpdateTypeRequestCount {
+		if i == BatchUpdateTypeUserQuota || i == BatchUpdateTypeUsedQuota || i == BatchUpdateTypeRequestCount || i == BatchUpdateTypeInviteCall {
 			continue
 		}
 		for key, value := range store {
@@ -108,6 +109,7 @@ func batchUpdate() {
 	userQuotaStore := stores[BatchUpdateTypeUserQuota]
 	usedQuotaStore := stores[BatchUpdateTypeUsedQuota]
 	requestCountStore := stores[BatchUpdateTypeRequestCount]
+	inviteCallStore := stores[BatchUpdateTypeInviteCall]
 
 	userIDs := make(map[int]struct{}, len(userQuotaStore)+len(usedQuotaStore)+len(requestCountStore))
 	for key := range userQuotaStore {
@@ -117,6 +119,12 @@ func batchUpdate() {
 		userIDs[key] = struct{}{}
 	}
 	for key := range requestCountStore {
+		userIDs[key] = struct{}{}
+	}
+	// The invite-call counter only ever accompanies a used-quota record, which is
+	// already in this set. Its keys are folded in anyway so a counter written by a
+	// path that had no quota delta still reaches the database.
+	for key := range inviteCallStore {
 		userIDs[key] = struct{}{}
 	}
 	for key := range userIDs {
