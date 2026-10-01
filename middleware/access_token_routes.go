@@ -241,11 +241,16 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/log/search":                       accessTokenScopeRule("log:read"),
 	"GET /api/log/self":                         accessTokenScopeRule("usage:read"),
 	"GET /api/log/self/search":                  accessTokenScopeRule("usage:read"),
-	"GET /api/data/":                            accessTokenScopeRule("log:read"),
-	"GET /api/data/users":                       accessTokenScopeRule("log:read"),
-	"GET /api/data/self":                        accessTokenScopeRule("usage:read"),
-	"GET /api/data/flow":                        accessTokenScopeRule("log:read"),
-	"GET /api/data/flow/self":                   accessTokenScopeRule("usage:read"),
+	// Xingya self-refund. The read side lists refundable logs, so it follows
+	// the self usage-log scope; the write side credits real wallet quota or
+	// restores subscription allowance, so it takes the wallet write scope.
+	"GET /api/log/self/refundable": accessTokenScopeRule("usage:read"),
+	"POST /api/log/self/refund":    accessTokenScopeRule("wallet:write"),
+	"GET /api/data/":               accessTokenScopeRule("log:read"),
+	"GET /api/data/users":          accessTokenScopeRule("log:read"),
+	"GET /api/data/self":           accessTokenScopeRule("usage:read"),
+	"GET /api/data/flow":           accessTokenScopeRule("log:read"),
+	"GET /api/data/flow/self":      accessTokenScopeRule("usage:read"),
 
 	// router/api-router.go: /api/group, /api/prefill_group
 	"GET /api/group/":               accessTokenScopeRule("group:read"),

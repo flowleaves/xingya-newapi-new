@@ -1,5 +1,68 @@
 # CHANGELOG — 星芽 NewAPI
 
+## v2.0.0-rc41（上游跟进版）
+
+> 在 `v2.0.0-rc37` 基础上把上游基线从 **`v1.0.0-rc.37`（`385d2dfd`）** 跟进到
+> **`v1.0.0-rc.41`（`2035a82a`）**，跨越 rc38–rc41 共 **116 个上游提交**。
+> 星芽自研功能（签到分档、自助补回空、充值1、品牌）**全部保留**，无功能回退。
+
+### 合并结果
+
+上游 651 个文件变动，星芽改动 62 个文件，**真正重叠仅 18 个**，其中只有 **3 个需要手工解冲突**：
+
+| 文件 | 处置 |
+|---|---|
+| `web/index.html` | 保留星芽 favicon / apple-touch-icon 链接（上游 rc41 移除的是它自己的 `/logo.png`） |
+| `web/public/favicon.ico`、`web/public/logo.png` | 保留星芽品牌资源（上游只是同文件名重编码） |
+
+其余全部自动合并，含两个后端热点：`model/main.go`（上游新增 `&UserAccessToken{}` 迁移注册与
+`EnsureLegacyAccessTokenRetireAt`，星芽 `ensureLogRefundTable` 位置正确保留）、
+`router/api-router.go`（上游 `/api/user/self/token` → `/access_tokens` 替换，星芽签到与补回路由完好）。
+
+### 上游带来的能力（无需改造即获得）
+
+| 能力 | 说明 |
+|---|---|
+| **作用域访问令牌** | 面板访问令牌由单值改为 `user_access_tokens` 表 + 独立作用域，旧令牌带 30 天过渡期 |
+| **请求策略设置页** | 新增 `request-policies` 章节，原 `RetryTimes` / `channel_affinity` / `monitor_setting` 从「模型设置」迁入 |
+| **预扣费模型重写** | 新增 `quota_setting.trust_quota_usd`（钱包免预扣门槛，默认 10 USD）与 `quota_setting.pre_consume_multiplier`；旧 `PreConsumedQuota` 变量保留但不再参与公式 |
+| **响应模型观测** | 日志 `other.response_model{requested,upstream,returned}`，可直接看出上游返回模型与请求不一致 |
+| **JS 任务插件引擎** | `grafana/sobek` → `Calcium-Ion/moejs`（alpha） |
+| 渠道模型重定向工作台、vLLM / SGLang 渠道、系统任务历史清理 | — |
+
+### 星芽侧改动
+
+| 项 | 说明 |
+|---|---|
+| `checkin-rules.tsx` | 档位数值改走 `@/lib/format` 的 `formatNumber` + `toIntlLocale`，满足 `web/AGENTS.md` 新增的强制格式化与 `project/intl-locale` lint 规则（改动前该文件即违规） |
+| `VERSION` | `v2.0.0-rc37` → `v2.0.0-rc41` |
+
+### ⚠️ 验证状态（不得据此声明三库兼容）
+
+| 项 | 状态 |
+|---|---|
+| SQLite 全新库迁移 | ✅ 实跑通过 |
+| SQLite 迁移幂等（连续 3 次启动） | ✅ schema 217 对象完全等价，无 `ALTER TABLE` 重复下发 |
+| SQLite 升级路径（rc37 库 → rc41） | ✅ 业务数据与关键字段值零改写，两条迁移路径 schema 收敛一致 |
+| 后端 `go build ./...` | ✅ |
+| `relaykit` 独立构建（`GOWORK=off`） | ✅ |
+| 前端 `typecheck` / 生产构建 | ✅ |
+| 星芽自研 13 个前端文件 lint | ✅ 0 error / 0 warning |
+| **PostgreSQL 实跑** | ❌ **本次未执行**——本机 PostgreSQL 16.2 无法创建 `Global\` 命名共享内存（Win32 1314 `ERROR_PRIVILEGE_NOT_HELD`，进程无 `SeCreateGlobalPrivilege`）。rc41 新增的 PostgreSQL 专属迁移路径仅完成**代码级审计**，见下 |
+| **MySQL 实跑** | ❌ **本次未执行**——本机无 MySQL 实例、无 Docker |
+
+**PostgreSQL 代码级审计结论**：rc41 新增的 `postgresSchemaMigrator.MigrateColumnUnique` 会按
+`pg_catalog` 解析并**删除单列唯一约束**（`ACCESS EXCLUSIVE` 表锁）。逐表比对 rc37→rc41 的
+`uniqueIndex` 标签，**唯一改动是 `model/user.go` 的注释**（`users.access_token` 的 `uniqueIndex`
+标签保留），因此该逻辑不会命中现有生产表。`prefill_groups` 的唯一性迁移在 rc41 中改为
+**直接 DROP 冲突约束/索引**（rc37 为拒绝迁移即报错），该表生产 0 行。
+
+### 上线前需决策
+
+1. **`quota_setting.trust_quota_usd` 默认 10 USD** 意味着钱包余额 ≥ $10 等值的用户**完全不预扣**。是否接受？不接受则置 0 禁用绕过。
+2. **旧面板 AccessToken 有 30 天退役期**。使用该令牌的外部集成（余额监控、状态页、自研脚本）必须在此窗口内迁移到 `/api/user/self/access_tokens`。
+3. **JS 任务插件引擎已更换**（sobek → moejs alpha）。生产若在用 MJ / Suno / Kling / 即梦等任务插件，升级后须逐个回归。
+
 ## v2.0.0-rc37（重建版）
 
 > **这不是 `xingya-newapi`（rc.25+1 快照）的升级版，而是一次换基线的重建版。**
