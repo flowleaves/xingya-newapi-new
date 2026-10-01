@@ -3,17 +3,25 @@ package jsplugin
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"math"
+	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
+	"unsafe"
+	"weak"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/gin-gonic/gin"
+	jsoniter "github.com/json-iterator/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -102,6 +110,72 @@ export function invalid(kind) {
 	}
 }
 
+func TestEngineRawJSONArgumentsMatchDecodedArguments(t *testing.T) {
+	engine, err := Compile(`
+export function describe(...values) {
+  const seen = [];
+  const stack = values.reverse().map((v) => ({v}));
+  while (stack.length > 0) {
+    const {v, key, close} = stack.pop();
+    if (close) {
+      seen.push(close);
+      continue;
+    }
+    if (key !== undefined) seen.push(key);
+    if (v === null || typeof v !== "object") {
+      seen.push(typeof v + ":" + (Object.is(v, -0) ? "-0" : JSON.stringify(v)));
+      continue;
+    }
+    const array = Array.isArray(v);
+    seen.push(array ? "[" : Object.getPrototypeOf(v) === Object.prototype ? "{" : "{?");
+    stack.push({close: array ? "]" : "}"});
+    const keys = Object.keys(v);
+    for (let i = keys.length - 1; i >= 0; i--) {
+      stack.push({v: v[keys[i]], key: array ? undefined : JSON.stringify(keys[i])});
+    }
+  }
+  return seen.join(" ");
+}`, Options{})
+	require.NoError(t, err)
+	// Hosts pass text written by common.Marshal, where both paths agree on
+	// key order, numbers and strings.
+	values := map[string]any{
+		"object": map[string]any{
+			"__proto__": map[string]any{"polluted": true},
+			"10":        "ten", "2": "two", "a": []any{}, "b": map[string]any{},
+			"numbers": []any{0, math.Copysign(0, -1), 1e21, int64(123456789012345678), 1.5e-7, -12, math.MaxInt64, math.SmallestNonzeroFloat64},
+			"strings": []any{"", "<>&  ", "é中😀", "\u0000\t\"\\", "a\xffb"},
+			"nested":  map[string]any{"z": nil, "y": []any{true, false, map[string]any{"x": []any{[]any{1}}}}},
+		},
+		"array":  []any{map[string]any{"id": "x", "b": 1, "a": 2}, nil, "s"},
+		"string": "plain",
+		"number": 42.5,
+		"null":   nil,
+		"deep":   json.RawMessage(strings.Repeat("[", 600) + strings.Repeat("]", 600)),
+	}
+	for name, value := range values {
+		t.Run(name, func(t *testing.T) {
+			text, err := common.Marshal(value)
+			require.NoError(t, err)
+			var decoded any
+			require.NoError(t, common.Unmarshal(text, &decoded))
+			want, err := engine.Call(t.Context(), "describe", decoded)
+			require.NoError(t, err)
+			got, err := engine.Call(t.Context(), "describe", RawJSON(text))
+			require.NoError(t, err)
+			assert.Equal(t, want, got)
+			nested, err := engine.Call(t.Context(), "describe", map[string]any{"value": RawJSON(text)})
+			require.NoError(t, err)
+			wantNested, err := engine.Call(t.Context(), "describe", map[string]any{"value": decoded})
+			require.NoError(t, err)
+			assert.Equal(t, wantNested, nested)
+		})
+	}
+
+	_, err = engine.Call(t.Context(), "describe", "first", RawJSON(`{"a":`))
+	require.EqualError(t, err, "plugin @ hook describe argument 2: unexpected end of JSON input")
+}
+
 func TestJSONStateChangesAndEncodedLimits(t *testing.T) {
 	const changes = `[
   [{"op":"set","path":[],"value":{"text":"<","parts":[],"nested":{"value":null}}}],
@@ -146,16 +220,6 @@ func TestJSONStateChangesAndEncodedLimits(t *testing.T) {
 		require.NoError(t, state.Apply(t.Context(), []any{map[string]any{"op": "set", "path": []any{}, "value": "<"}}))
 		require.Error(t, state.Apply(t.Context(), []any{map[string]any{"op": "appendText", "path": []any{}, "value": "<"}}))
 	})
-	t.Run("invalid UTF-8 follows codec normalization", func(t *testing.T) {
-		state := NewJSONState(8)
-		require.NoError(t, state.Apply(t.Context(), []any{
-			map[string]any{"op": "set", "path": []any{}, "value": string([]byte{0xff})},
-			map[string]any{"op": "appendText", "path": []any{}, "value": string([]byte{0xfe})},
-		}))
-		value, err := state.Value()
-		require.NoError(t, err)
-		assert.Equal(t, "\ufffd\ufffd", value)
-	})
 	t.Run("request cancellation", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
@@ -197,6 +261,117 @@ func TestJSONStateChangesAndEncodedLimits(t *testing.T) {
 			require.Error(t, err)
 		})
 	}
+}
+
+type bytePreservingJSONCodec struct {
+	jsoniter.API
+}
+
+func (c bytePreservingJSONCodec) Decode(reader io.Reader, value any) error {
+	return c.NewDecoder(reader).Decode(value)
+}
+
+func TestJSONStateUTF8Normalization(t *testing.T) {
+	const codecEnv = "JSPLUGIN_TEST_BYTE_PRESERVING_JSON"
+	if os.Getenv(codecEnv) == "1" {
+		// Only this test runs in the child process; the parent's codec and
+		// parallel tests are unaffected. Disabling HTML escaping in jsoniter
+		// also preserves invalid UTF-8, independently of Sonic's platform support.
+		kitutil.SetCodec(bytePreservingJSONCodec{jsoniter.Config{SortMapKeys: true}.Froze()})
+		encoded, err := common.Marshal("\xff\xfe")
+		require.NoError(t, err)
+		require.Equal(t, []byte("\"\xff\xfe\""), encoded)
+		var decoded any
+		require.NoError(t, common.Unmarshal(encoded, &decoded))
+		require.Equal(t, "\xff\xfe", decoded)
+	} else {
+		t.Run("byte preserving codec", func(t *testing.T) {
+			executable, err := os.Executable()
+			require.NoError(t, err)
+			command := exec.CommandContext(t.Context(), executable, "-test.run=^TestJSONStateUTF8Normalization$", "-test.v")
+			command.Env = append(os.Environ(), codecEnv+"=1")
+			output, err := command.CombinedOutput()
+			require.NoError(t, err, "%s", output)
+		})
+	}
+
+	const raw = "图像\xff\xfe😀<&\n\"\\\u2028"
+	const normalized = "图像\ufffd\ufffd😀<&\n\"\\\u2028"
+	for _, tc := range []struct {
+		name    string
+		op      string
+		path    []any
+		initial any
+		value   any
+		want    any
+	}{
+		{"set", "set", []any{}, false, raw, normalized},
+		{"append", "append", []any{}, []any{float64(0), false}, raw, []any{float64(0), false, normalized}},
+		{"appendText", "appendText", []any{"a<b"}, map[string]any{"a<b": "前\xff"}, raw, map[string]any{"a<b": "前\ufffd" + normalized}},
+		{"separate invalid bytes", "appendText", []any{}, "\xff", "\xfe", "\ufffd\ufffd"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			encoded, err := common.Marshal(tc.want)
+			require.NoError(t, err)
+			for _, shortBy := range []int{0, 1} {
+				state := NewJSONState(len(encoded) - shortBy)
+				err := state.Apply(t.Context(), []any{
+					map[string]any{"op": "set", "path": []any{}, "value": tc.initial},
+					map[string]any{"op": tc.op, "path": tc.path, "value": tc.value},
+				})
+				if shortBy == 0 {
+					require.NoError(t, err, "normalized JSON must fit exactly")
+					value, err := state.Value()
+					require.NoError(t, err)
+					assert.Equal(t, tc.want, value)
+					continue
+				}
+				require.Error(t, err, "normalized JSON must exceed the limit by one byte")
+				value, valueErr := state.Value()
+				require.ErrorIs(t, valueErr, err)
+				assert.Nil(t, value, "a failed batch must not publish its successful prefix")
+				require.ErrorIs(t, state.Apply(t.Context(), []any{
+					map[string]any{"op": "set", "path": []any{}, "value": nil},
+				}), err, "a later replacement must not revive failed state")
+			}
+		})
+	}
+
+	t.Run("clone", func(t *testing.T) {
+		engine, err := Compile(`export function clone(input) { return utils.json.clone(input); }`, Options{})
+		require.NoError(t, err)
+		input := map[string]any{"text": raw, "items": []any{float64(0), false, raw}}
+		value, err := engine.Call(t.Context(), "clone", input)
+		require.NoError(t, err)
+		assert.Equal(t, map[string]any{"text": normalized, "items": []any{int64(0), false, normalized}}, value)
+		assert.Equal(t, raw, input["text"])
+
+		encoded, err := common.Marshal(normalized)
+		require.NoError(t, err)
+		padding := strings.Repeat("x", MaxJSONToolBytes-len(encoded))
+		value, err = engine.Call(t.Context(), "clone", raw+padding)
+		require.NoError(t, err, "normalized clone must fit exactly")
+		assert.Equal(t, normalized, strings.TrimSuffix(value.(string), padding))
+		value, err = engine.Call(t.Context(), "clone", raw+padding+"x")
+		require.Error(t, err, "normalized clone must exceed the limit by one byte")
+		assert.Nil(t, value)
+	})
+
+	t.Run("invalid keys and paths remain rejected", func(t *testing.T) {
+		for _, change := range []any{
+			map[string]any{"op": "set", "path": []any{}, "value": map[string]any{"\xff\xfe": raw}},
+			map[string]any{"op": "set", "path": []any{"\xff\xfe"}, "value": raw},
+		} {
+			state := NewJSONState(128)
+			require.Error(t, state.Apply(t.Context(), []any{
+				map[string]any{"op": "set", "path": []any{}, "value": map[string]any{"\ufffd\ufffd": "original"}},
+				change,
+			}))
+			value, err := state.Value()
+			require.Error(t, err)
+			assert.Nil(t, value)
+		}
+	})
 }
 
 func TestEngineConsoleLogUsesDebugLoggerAndRequestContext(t *testing.T) {
@@ -282,6 +457,8 @@ func TestCompileRejectsAsynchronousAndImportedPlugins(t *testing.T) {
 		"static import":   `import value from "dependency"; export function run() { return value; }`,
 		"dynamic import":  `export function run() { return import("dependency"); }`,
 		"top-level await": `const value = await work(); export function run() { return value; }`,
+		"export from":     `export { value as run } from "dependency";`,
+		"export star":     `export * from "dependency"; export function run() {}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Compile(source, Options{Key: "invalid"})
@@ -292,6 +469,18 @@ func TestCompileRejectsAsynchronousAndImportedPlugins(t *testing.T) {
 
 	_, err := Compile(`export function run() { return "import async await"; }`, Options{Key: "valid"})
 	require.NoError(t, err)
+
+	for name, body := range map[string]string{
+		"eval":                 `return eval("import('dependency')");`,
+		"Function constructor": `return Function("return async function () {}")();`,
+	} {
+		engine, err := Compile(`export function run() { `+body+` }`, Options{Key: "dynamic"})
+		require.NoError(t, err, name)
+		_, err = engine.Call(context.Background(), "run")
+		assert.ErrorContains(t, err, "EvalError", name)
+	}
+	_, err = Compile(`eval("1"); export function run() {}`, Options{Key: "dynamic"})
+	assert.ErrorContains(t, err, "EvalError")
 }
 
 func TestCompileIgnoresSourceMapDirectives(t *testing.T) {
@@ -337,6 +526,22 @@ func TestEngineDoesNotReinitializeIdleRuntimeAfterGC(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(42), value)
 	assert.Equal(t, int64(1), initialized.Load())
+}
+
+func TestEngineIdleRuntimeReleasesLastCallArguments(t *testing.T) {
+	engine, err := Compile(`export function run(body){return body.image.length;}`, Options{Concurrency: 1})
+	require.NoError(t, err)
+	image := strings.Repeat("A", 1<<20)
+	released := weak.Make(unsafe.StringData(image))
+	value, err := engine.Call(t.Context(), "run", map[string]any{"image": image})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1<<20), value)
+	runtime.GC()
+	runtime.GC()
+	assert.Nil(t, released.Value(), "an idle pooled runtime must not keep the last request body alive")
+	value, err = engine.Call(t.Context(), "run", map[string]any{"image": "AB"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), value)
 }
 
 func TestEngineBoundsConcurrentCallsAndCancelsAnOccupiedRuntime(t *testing.T) {
@@ -387,6 +592,30 @@ export function replace(){run=function(){return 2;};native.render=function(){ret
 	value, err = engine.CallMember(t.Context(), "native", "render")
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), value)
+}
+
+func TestEngineHasExportUsesBindingsAsLoaded(t *testing.T) {
+	engine, err := Compile(`
+export let later;
+export const unset = undefined;
+export function run(){return 1;}
+export function assign(){later=function(){return 2;};}
+`, Options{Concurrency: 1})
+	require.NoError(t, err)
+
+	engine.semaphore <- struct{}{}
+	assert.True(t, engine.HasExport("run"))
+	assert.False(t, engine.HasExport("later"))
+	assert.False(t, engine.HasExport("unset"))
+	assert.False(t, engine.HasExport("missing"))
+	<-engine.semaphore
+
+	_, err = engine.Call(t.Context(), "assign")
+	require.NoError(t, err)
+	assert.False(t, engine.HasExport("later"))
+	value, err := engine.Call(t.Context(), "later")
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), value)
 }
 
 func TestEngineHookErrorExtractsSanitizedJSMessage(t *testing.T) {

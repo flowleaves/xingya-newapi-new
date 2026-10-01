@@ -48,6 +48,44 @@ type passkeyDomainBegin struct {
 	} `json:"options"`
 }
 
+func TestGetStatusDoesNotExposePasskeyOrigins(t *testing.T) {
+	settings := system_setting.GetPasskeySettings()
+	originalSettings := *settings
+	originalOptionMap := common.OptionMap
+	originalServerAddress := system_setting.ServerAddress
+	t.Cleanup(func() {
+		*settings = originalSettings
+		common.OptionMap = originalOptionMap
+		system_setting.ServerAddress = originalServerAddress
+	})
+	common.OptionMap = map[string]string{}
+	system_setting.ServerAddress = "https://www.example.com"
+	*settings = system_setting.PasskeySettings{Enabled: true, RPID: "example.com"}
+
+	for _, origins := range []string{"https://www.example.com,https://private.example.com", "", "[]"} {
+		t.Run("origins="+origins, func(t *testing.T) {
+			settings.Origins = origins
+			response := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(response)
+			context.Request = httptest.NewRequest(http.MethodGet, "/api/status", nil)
+
+			GetStatus(context)
+
+			require.Equal(t, http.StatusOK, response.Code)
+			var payload struct {
+				Success bool           `json:"success"`
+				Data    map[string]any `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &payload))
+			require.True(t, payload.Success)
+			assert.NotContains(t, payload.Data, "passkey_origins")
+			assert.NotContains(t, response.Body.String(), "private.example.com")
+			assert.Equal(t, true, payload.Data["passkey_login"])
+			assert.Equal(t, origins, settings.Origins)
+		})
+	}
+}
+
 func passkeyDomainRequest(t *testing.T, path string, payload any, identity service.AuthIdentity, origin string, handler gin.HandlerFunc) *httptest.ResponseRecorder {
 	t.Helper()
 	body, err := common.Marshal(payload)
@@ -108,13 +146,14 @@ func TestPasskeyDomainsPreserveCredentialsAcrossVerificationFlows(t *testing.T) 
 			beginHandler, finishHandler := PasskeyLoginBegin, PasskeyLoginFinish
 			request := map[string]any{"rp_id": legacyRPID}
 			if kind == "login factor" {
-				pending, err := service.StartLoginVerification(user, "password")
+				pending, err := service.StartLoginVerification(user, "password", nil)
 				require.NoError(t, err)
 				request["flow_token"] = pending.FlowToken
 				beginPath, finishPath = "/api/user/login/passkey/begin", "/api/user/login/passkey/finish"
 				beginHandler, finishHandler = LoginPasskeyBegin, LoginPasskeyFinish
 			} else if kind == "sensitive action" {
 				request["scope"] = service.VerificationScopeAccessTokenGenerate
+				request["context"] = map[string]any{"scopes": []string{"profile:read"}, "expires_at": 0}
 				beginPath, finishPath = "/api/user/passkey/verify/begin", "/api/user/passkey/verify/finish"
 				beginHandler, finishHandler = PasskeyVerifyBegin, PasskeyVerifyFinish
 			}
@@ -255,6 +294,9 @@ func TestPasskeyDomainChoicesRespectOriginAndConfiguration(t *testing.T) {
 func setupPasskeyDomainOptions(t *testing.T) {
 	t.Helper()
 	require.NoError(t, model.DB.AutoMigrate(&model.Option{}))
+	// These tests assert on the whole options table. The server-managed legacy
+	// access token deadline written by the enrollment fixture is unrelated.
+	require.NoError(t, model.DB.Delete(&model.Option{Key: "LegacyAccessTokenRetireAt"}).Error)
 	common.OptionMapRWMutex.RLock()
 	previousOptions := maps.Clone(common.OptionMap)
 	previousAddress := system_setting.ServerAddress
