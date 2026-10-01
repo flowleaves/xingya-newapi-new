@@ -18,6 +18,9 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useTranslation } from 'react-i18next'
 
+import { toIntlLocale } from '@/i18n/languages'
+import { formatNumber } from '@/lib/format'
+
 import type { CheckinStatusResponse, CheckinTier } from '../types'
 
 /**
@@ -137,7 +140,8 @@ export function CheckinRules(props: {
   checkinData: CheckinStatusResponse | undefined
   checkedToday: boolean
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
 
   const count = props.checkinData?.yesterday?.count ?? 0
   const quota = props.checkinData?.yesterday?.quota ?? 0
@@ -191,7 +195,7 @@ export function CheckinRules(props: {
       />
       <RuleCard
         title={t('By yesterday consumed quota')}
-        value={`${t('Yesterday')}: 🌱${quotaTier.toLocaleString()}`}
+        value={`${t('Yesterday')}: 🌱${formatNumber(quotaTier, locale)}`}
         ruleText={t('Reward rises with yesterday consumed quota')}
         tiers={quotaTiers}
         reachedFn={(tier) => quotaTier >= tier.threshold}
@@ -211,7 +215,7 @@ export function CheckinRules(props: {
           </div>
           <div className='text-muted-foreground mb-1 text-xs tabular-nums'>
             {t('Historical total consumed')}: 🌱
-            {usedQuotaTier.toLocaleString()}
+            {formatNumber(usedQuotaTier, locale)}
           </div>
           <div className='text-muted-foreground mb-2 text-xs'>
             {t(
