@@ -28,7 +28,9 @@ import { Route as errors500RouteImport } from './routes/(errors)/500'
 import { Route as errors503RouteImport } from './routes/(errors)/503'
 import { Route as AuthenticatedChat2linkRouteImport } from './routes/_authenticated/chat2link'
 import { Route as AuthenticatedCheckinRouteImport } from './routes/_authenticated/checkin'
+import { Route as AuthenticatedInviteRewardsRouteImport } from './routes/_authenticated/invite-rewards'
 import { Route as AuthenticatedRechargeRouteImport } from './routes/_authenticated/recharge'
+import { Route as AuthenticatedRegistrationRiskRouteImport } from './routes/_authenticated/registration-risk'
 import { Route as AuthenticatedSelfRefundRouteImport } from './routes/_authenticated/self-refund'
 import { Route as AuthenticatedSystemSettingsRouteRouteImport } from './routes/_authenticated/system-settings/route'
 import { Route as AboutIndexRouteImport } from './routes/about/index'
@@ -169,11 +171,23 @@ const AuthenticatedCheckinRoute = AuthenticatedCheckinRouteImport.update({
   path: '/checkin',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedInviteRewardsRoute =
+  AuthenticatedInviteRewardsRouteImport.update({
+    id: '/invite-rewards',
+    path: '/invite-rewards',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedRechargeRoute = AuthenticatedRechargeRouteImport.update({
   id: '/recharge',
   path: '/recharge',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedRegistrationRiskRoute =
+  AuthenticatedRegistrationRiskRouteImport.update({
+    id: '/registration-risk',
+    path: '/registration-risk',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedSelfRefundRoute = AuthenticatedSelfRefundRouteImport.update({
   id: '/self-refund',
   path: '/self-refund',
@@ -459,7 +473,9 @@ export interface FileRoutesByFullPath {
   '/503': typeof errors503Route
   '/chat2link': typeof AuthenticatedChat2linkRoute
   '/checkin': typeof AuthenticatedCheckinRoute
+  '/invite-rewards': typeof AuthenticatedInviteRewardsRoute
   '/recharge': typeof AuthenticatedRechargeRoute
+  '/registration-risk': typeof AuthenticatedRegistrationRiskRoute
   '/self-refund': typeof AuthenticatedSelfRefundRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
@@ -524,7 +540,9 @@ export interface FileRoutesByTo {
   '/503': typeof errors503Route
   '/chat2link': typeof AuthenticatedChat2linkRoute
   '/checkin': typeof AuthenticatedCheckinRoute
+  '/invite-rewards': typeof AuthenticatedInviteRewardsRoute
   '/recharge': typeof AuthenticatedRechargeRoute
+  '/registration-risk': typeof AuthenticatedRegistrationRiskRoute
   '/self-refund': typeof AuthenticatedSelfRefundRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about': typeof AboutIndexRoute
@@ -593,7 +611,9 @@ export interface FileRoutesById {
   '/(errors)/503': typeof errors503Route
   '/_authenticated/chat2link': typeof AuthenticatedChat2linkRoute
   '/_authenticated/checkin': typeof AuthenticatedCheckinRoute
+  '/_authenticated/invite-rewards': typeof AuthenticatedInviteRewardsRoute
   '/_authenticated/recharge': typeof AuthenticatedRechargeRoute
+  '/_authenticated/registration-risk': typeof AuthenticatedRegistrationRiskRoute
   '/_authenticated/self-refund': typeof AuthenticatedSelfRefundRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
@@ -661,7 +681,9 @@ export interface FileRouteTypes {
     | '/503'
     | '/chat2link'
     | '/checkin'
+    | '/invite-rewards'
     | '/recharge'
+    | '/registration-risk'
     | '/self-refund'
     | '/oauth/$provider'
     | '/about/'
@@ -726,7 +748,9 @@ export interface FileRouteTypes {
     | '/503'
     | '/chat2link'
     | '/checkin'
+    | '/invite-rewards'
     | '/recharge'
+    | '/registration-risk'
     | '/self-refund'
     | '/oauth/$provider'
     | '/about'
@@ -794,7 +818,9 @@ export interface FileRouteTypes {
     | '/(errors)/503'
     | '/_authenticated/chat2link'
     | '/_authenticated/checkin'
+    | '/_authenticated/invite-rewards'
     | '/_authenticated/recharge'
+    | '/_authenticated/registration-risk'
     | '/_authenticated/self-refund'
     | '/oauth/$provider'
     | '/about/'
@@ -996,11 +1022,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCheckinRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/invite-rewards': {
+      id: '/_authenticated/invite-rewards'
+      path: '/invite-rewards'
+      fullPath: '/invite-rewards'
+      preLoaderRoute: typeof AuthenticatedInviteRewardsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/recharge': {
       id: '/_authenticated/recharge'
       path: '/recharge'
       fullPath: '/recharge'
       preLoaderRoute: typeof AuthenticatedRechargeRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/registration-risk': {
+      id: '/_authenticated/registration-risk'
+      path: '/registration-risk'
+      fullPath: '/registration-risk'
+      preLoaderRoute: typeof AuthenticatedRegistrationRiskRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/self-refund': {
@@ -1421,7 +1461,9 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedSystemSettingsRouteRoute: typeof AuthenticatedSystemSettingsRouteRouteWithChildren
   AuthenticatedChat2linkRoute: typeof AuthenticatedChat2linkRoute
   AuthenticatedCheckinRoute: typeof AuthenticatedCheckinRoute
+  AuthenticatedInviteRewardsRoute: typeof AuthenticatedInviteRewardsRoute
   AuthenticatedRechargeRoute: typeof AuthenticatedRechargeRoute
+  AuthenticatedRegistrationRiskRoute: typeof AuthenticatedRegistrationRiskRoute
   AuthenticatedSelfRefundRoute: typeof AuthenticatedSelfRefundRoute
   AuthenticatedChatChatIdRoute: typeof AuthenticatedChatChatIdRoute
   AuthenticatedDashboardSectionRoute: typeof AuthenticatedDashboardSectionRoute
@@ -1450,7 +1492,9 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
     AuthenticatedSystemSettingsRouteRouteWithChildren,
   AuthenticatedChat2linkRoute: AuthenticatedChat2linkRoute,
   AuthenticatedCheckinRoute: AuthenticatedCheckinRoute,
+  AuthenticatedInviteRewardsRoute: AuthenticatedInviteRewardsRoute,
   AuthenticatedRechargeRoute: AuthenticatedRechargeRoute,
+  AuthenticatedRegistrationRiskRoute: AuthenticatedRegistrationRiskRoute,
   AuthenticatedSelfRefundRoute: AuthenticatedSelfRefundRoute,
   AuthenticatedChatChatIdRoute: AuthenticatedChatChatIdRoute,
   AuthenticatedDashboardSectionRoute: AuthenticatedDashboardSectionRoute,

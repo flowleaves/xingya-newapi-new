@@ -33,6 +33,7 @@ import {
   PlugZap,
   Radio,
   ServerCog,
+  ShieldAlert,
   Settings,
   ShieldCheck,
   Ticket,
@@ -120,6 +121,11 @@ export function useSidebarData(): SidebarData {
             icon: Wallet,
           },
           {
+            title: t('Invite Rewards'),
+            url: '/invite-rewards',
+            icon: Gift,
+          },
+          {
             title: t('Recharge Center'),
             url: '/recharge',
             icon: Banknote,
@@ -164,6 +170,12 @@ export function useSidebarData(): SidebarData {
             title: t('Users'),
             url: '/users',
             icon: Users,
+          },
+          {
+            title: t('Registration Risk'),
+            url: '/registration-risk',
+            icon: ShieldAlert,
+            requiredRole: ROLE.ADMIN,
           },
           {
             title: t('Redemption Codes'),

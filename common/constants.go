@@ -72,13 +72,14 @@ var TelegramOAuthEnabled = false
 var TurnstileCheckEnabled = false
 var RegisterEnabled = true
 
-// RegistrationDeviceLimitEnabled refuses a second registration from the same device
-// inside the deduplication window. It ships off so an operator can review the whitelist
-// before it starts rejecting signups.
-var RegistrationDeviceLimitEnabled = false
+// RegistrationDeviceLimitEnabled enables the non-blocking registration trial protection.
+// A repeated exact IP + user-agent fingerprint can still register, but does not receive
+// another registration trial quota. The setting name is retained for configuration
+// compatibility with the former hard-blocking implementation.
+var RegistrationDeviceLimitEnabled = true
 
 // RegistrationDeviceLimitWhitelist holds addresses and CIDR ranges that are exempt from
-// the registration device limit.
+// registration trial fingerprint protection.
 var RegistrationDeviceLimitWhitelist = []string{}
 
 var EmailDomainRestrictionEnabled = false // 是否启用邮箱域名限制

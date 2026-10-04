@@ -74,16 +74,18 @@ function sidebarFor(admin?: object, user?: object, canConfigure = true) {
 }
 
 describe('security sidebar visibility', () => {
-  it('old configurations show Security & Access immediately after Profile and keep API Keys', () => {
+  it('old configurations keep security ordering and add Invite Rewards', () => {
     const { result } = sidebarFor(
       { personal: { enabled: true, personal: true, topup: true } },
       { personal: { enabled: true, personal: true } }
     )
-    expect(
-      result.current
-        .find((group) => group.id === 'personal')
-        ?.items.map((item) => item.title)
-    ).toEqual(['Wallet', 'Profile', 'Security & Access'])
+    const personalTitles = result.current
+      .find((group) => group.id === 'personal')
+      ?.items.map((item) => item.title) ?? []
+    expect(personalTitles).toContain('Invite Rewards')
+    expect(personalTitles.indexOf('Security & Access')).toBe(
+      personalTitles.indexOf('Profile') + 1
+    )
     expect(
       result.current
         .flatMap((group) => group.items)

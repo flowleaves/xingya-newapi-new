@@ -528,19 +528,14 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 	if affiliateCode != "" {
 		inviterId, _ = model.GetUserIdByAffCode(affiliateCode)
 	}
-	if err := model.GuardRegistrationDevice(nil, c.ClientIP(), c.Request.UserAgent()); err != nil {
-		if errors.Is(err, model.ErrRegistrationDeviceLimited) {
-			return nil, nil, &OAuthRegistrationDeviceLimitedError{}
-		}
-		return nil, nil, err
-	}
+	trialReservation := model.BeginRegistrationTrial(c.ClientIP(), c.Request.UserAgent())
 
 	// Use transaction to ensure user creation and OAuth binding are atomic
 	if genericProvider, ok := provider.(*oauth.GenericOAuthProvider); ok {
 		// Custom provider: create user and binding in a transaction
 		err := model.DB.Transaction(func(tx *gorm.DB) error {
 			// Create user
-			if err := user.InsertWithTx(tx, inviterId); err != nil {
+			if err := user.InsertRegistrationWithTx(tx, inviterId, trialReservation.Quota()); err != nil {
 				return err
 			}
 
@@ -554,10 +549,15 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 				return err
 			}
 
-			return model.RecordRegistrationDevice(tx, user.Id, c.ClientIP(), c.Request.UserAgent())
+			return nil
 		})
 		if err != nil {
+			trialReservation.Rollback()
 			return nil, nil, err
+		}
+		trialReservation.Commit()
+		if err := model.RecordRegistrationDevice(nil, user.Id, c.ClientIP(), c.Request.UserAgent()); err != nil {
+			common.SysLog("failed to record OAuth registration device: " + err.Error())
 		}
 
 		// Perform post-transaction tasks (logs, sidebar config, inviter rewards)
@@ -566,7 +566,7 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 		// Built-in provider: create user and update provider ID in a transaction
 		err := model.DB.Transaction(func(tx *gorm.DB) error {
 			// Create user
-			if err := user.InsertWithTx(tx, inviterId); err != nil {
+			if err := user.InsertRegistrationWithTx(tx, inviterId, trialReservation.Quota()); err != nil {
 				return err
 			}
 
@@ -583,10 +583,15 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 				return err
 			}
 
-			return model.RecordRegistrationDevice(tx, user.Id, c.ClientIP(), c.Request.UserAgent())
+			return nil
 		})
 		if err != nil {
+			trialReservation.Rollback()
 			return nil, nil, err
+		}
+		trialReservation.Commit()
+		if err := model.RecordRegistrationDevice(nil, user.Id, c.ClientIP(), c.Request.UserAgent()); err != nil {
+			common.SysLog("failed to record OAuth registration device: " + err.Error())
 		}
 
 		// Perform post-transaction tasks

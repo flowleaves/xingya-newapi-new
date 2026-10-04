@@ -98,7 +98,8 @@ func TestAdminUserListProjectionHidesInviteQualifyingCalls(t *testing.T) {
 	require.NoError(t, db.Model(&model.User{}).Where("id = ?", owner.Id).
 		Update("success_calls_after_invite_window", 7).Error)
 
-	// The counter is readable where settlement needs it.
+	// The legacy column remains readable for old data, while current settlement uses
+	// the separate reward ledger.
 	var settlementView model.User
 	require.NoError(t, db.First(&settlementView, owner.Id).Error)
 	assert.Equal(t, 7, settlementView.SuccessCallsAfterInviteWindow)

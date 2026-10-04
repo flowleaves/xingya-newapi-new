@@ -273,14 +273,7 @@ func Register(c *gin.Context) {
 	}
 	affCode := user.AffCode // this code is the inviter's code, not the user's own code
 	inviterId, _ := model.GetUserIdByAffCode(affCode)
-	if err := model.GuardRegistrationDevice(nil, c.ClientIP(), c.Request.UserAgent()); err != nil {
-		if errors.Is(err, model.ErrRegistrationDeviceLimited) {
-			common.ApiErrorI18n(c, i18n.MsgUserRegisterDeviceLimited)
-			return
-		}
-		common.ApiError(c, err)
-		return
-	}
+	trialReservation := model.BeginRegistrationTrial(c.ClientIP(), c.Request.UserAgent())
 	cleanUser := model.User{
 		Username:    user.Username,
 		Password:    user.Password,
@@ -291,7 +284,8 @@ func Register(c *gin.Context) {
 	if common.EmailVerificationEnabled {
 		cleanUser.Email = user.Email
 	}
-	if err := cleanUser.Insert(inviterId); err != nil {
+	if err := cleanUser.InsertRegistration(inviterId, trialReservation.Quota()); err != nil {
+		trialReservation.Rollback()
 		if errors.Is(err, model.ErrEmailAlreadyTaken) {
 			common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
 			return
@@ -299,6 +293,7 @@ func Register(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	trialReservation.Commit()
 
 	// 获取插入后的用户ID
 	var insertedUser model.User

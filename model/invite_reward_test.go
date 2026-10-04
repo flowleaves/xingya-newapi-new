@@ -9,17 +9,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// setupInviteRewardTestState prepares an isolated invite-reward fixture and restores
-// the global quota settings the settlement reads.
-func setupInviteRewardTestState(t *testing.T, inviteeQuota int, inviterQuota int) {
+func setupInviteRewardTestState(t *testing.T, inviterQuota int) {
 	t.Helper()
 	truncateTables(t)
 	require.NoError(t, ensureXingyaTables(DB))
 	require.NoError(t, DB.Exec("DELETE FROM xingya_invite_reward_pending").Error)
-
 	oldInviteeQuota := common.QuotaForInvitee
 	oldInviterQuota := common.QuotaForInviter
-	common.QuotaForInvitee = inviteeQuota
+	common.QuotaForInvitee = 9999
 	common.QuotaForInviter = inviterQuota
 	t.Cleanup(func() {
 		common.QuotaForInvitee = oldInviteeQuota
@@ -28,17 +25,11 @@ func setupInviteRewardTestState(t *testing.T, inviteeQuota int, inviterQuota int
 	})
 }
 
-// registerInviteRewardFixture records a reward exactly as an invited registration
-// would, then backdates it so the 24-hour window has already elapsed. Backdating
-// states the elapsed window explicitly instead of sleeping for it.
-func registerInviteRewardFixture(t *testing.T, inviterId int, inviteeId int, registeredAgo int64) *XingyaInviteRewardPending {
+func registerInviteRewardFixture(t *testing.T, inviterId int, inviteeId int) *XingyaInviteRewardPending {
 	t.Helper()
 	require.NoError(t, CreateInviteRewardPending(inviteeId, inviterId))
 	var reward XingyaInviteRewardPending
 	require.NoError(t, DB.Where("invitee_id = ?", inviteeId).First(&reward).Error)
-	reward.CreatedAt = common.GetTimestamp() - registeredAgo
-	require.NoError(t, DB.Model(&XingyaInviteRewardPending{}).Where("id = ?", reward.Id).
-		Update("created_at", reward.CreatedAt).Error)
 	return &reward
 }
 
@@ -49,203 +40,152 @@ func getInviteRewardFromDB(t *testing.T, id int) XingyaInviteRewardPending {
 	return reward
 }
 
-func setQualifyingInviteCalls(t *testing.T, userId int, calls int) {
+func qualifyInviteReward(t *testing.T, userId int) {
 	t.Helper()
-	require.NoError(t, DB.Model(&User{}).Where("id = ?", userId).
-		Update("success_calls_after_invite_window", calls).Error)
+	for range InviteRewardRequiredCalls {
+		RecordSuccessfulBillableCall(userId)
+	}
 }
 
-func TestCreateInviteRewardPendingPromisesWithoutPaying(t *testing.T) {
-	setupInviteRewardTestState(t, 5000, 8000)
-
+func TestCreateInviteRewardPendingOnlyStoresInviterReward(t *testing.T) {
+	setupInviteRewardTestState(t, 8000)
 	inviter := createReserveTestUser(t, 100000)
 	invitee := createReserveTestUser(t, 100000)
+	reward := registerInviteRewardFixture(t, inviter.Id, invitee.Id)
 
-	require.NoError(t, CreateInviteRewardPending(invitee.Id, inviter.Id))
-
-	var reward XingyaInviteRewardPending
-	require.NoError(t, DB.Where("invitee_id = ?", invitee.Id).First(&reward).Error)
 	assert.Equal(t, InviteRewardStatePending, reward.State)
-	assert.Equal(t, inviter.Id, reward.InviterId)
-	assert.Equal(t, 5000, reward.InviteeQuota)
+	assert.Zero(t, reward.InviteeQuota)
 	assert.Equal(t, 8000, reward.InviterQuota)
-	assert.Zero(t, reward.GrantedAt)
-
-	// The whole point of the change: registering must not move any money yet. The
-	// inviter's affiliate counters stay untouched as well.
-	assert.Equal(t, 100000, getUserQuotaFromDB(t, invitee.Id))
-	var storedInviter User
-	require.NoError(t, DB.First(&storedInviter, inviter.Id).Error)
-	assert.Zero(t, storedInviter.AffCount)
-	assert.Zero(t, storedInviter.AffQuota)
-	assert.Zero(t, storedInviter.AffHistoryQuota)
-}
-
-func TestCreateInviteRewardPendingIsIdempotentPerInvitee(t *testing.T) {
-	setupInviteRewardTestState(t, 5000, 8000)
-
-	inviter := createReserveTestUser(t, 100000)
-	invitee := createReserveTestUser(t, 100000)
-
-	require.NoError(t, CreateInviteRewardPending(invitee.Id, inviter.Id))
-	require.NoError(t, CreateInviteRewardPending(invitee.Id, inviter.Id))
-
-	var count int64
-	require.NoError(t, DB.Model(&XingyaInviteRewardPending{}).
-		Where("invitee_id = ?", invitee.Id).Count(&count).Error)
-	assert.EqualValues(t, 1, count)
-}
-
-func TestCreateInviteRewardPendingSkipsDisabledAndUnknownInviter(t *testing.T) {
-	setupInviteRewardTestState(t, 0, 0)
-
-	inviter := createReserveTestUser(t, 100000)
-	invitee := createReserveTestUser(t, 100000)
-
-	// No share configured: nothing to promise.
-	require.NoError(t, CreateInviteRewardPending(invitee.Id, inviter.Id))
-	// No inviter: nothing to promise.
-	require.NoError(t, CreateInviteRewardPending(invitee.Id, 0))
-
-	var count int64
-	require.NoError(t, DB.Model(&XingyaInviteRewardPending{}).Count(&count).Error)
-	assert.Zero(t, count)
-}
-
-func TestHasPendingInviteRewardWaitsForTheWindow(t *testing.T) {
-	setupInviteRewardTestState(t, 5000, 8000)
-
-	inviter := createReserveTestUser(t, 100000)
-	invitee := createReserveTestUser(t, 100000)
-	registerInviteRewardFixture(t, inviter.Id, invitee.Id, 60)
-
-	assert.False(t, HasPendingInviteReward(), "a reward inside its window is not settleable")
-
-	require.NoError(t, DB.Model(&XingyaInviteRewardPending{}).
-		Where("invitee_id = ?", invitee.Id).
-		Update("created_at", common.GetTimestamp()-inviteRewardWindowSeconds).Error)
-	assert.True(t, HasPendingInviteReward())
-}
-
-func TestSettleInviteRewardRequiresTheQualifyingCallCount(t *testing.T) {
-	setupInviteRewardTestState(t, 5000, 8000)
-
-	inviter := createReserveTestUser(t, 100000)
-	invitee := createReserveTestUser(t, 100000)
-	reward := registerInviteRewardFixture(t, inviter.Id, invitee.Id, inviteRewardWindowSeconds+60)
-	setQualifyingInviteCalls(t, invitee.Id, InviteRewardRequiredCalls-1)
-
-	granted, cancelled, err := SettleInviteReward(common.GetTimestamp())
-	require.NoError(t, err)
-	assert.Zero(t, granted)
-	assert.Zero(t, cancelled)
-
-	stored := getInviteRewardFromDB(t, reward.Id)
-	assert.Equal(t, InviteRewardStatePending, stored.State, "an ineligible reward stays pending for a later pass")
+	assert.Zero(t, reward.QualifyingCalls)
+	assert.Equal(t, 100000, getUserQuotaFromDB(t, inviter.Id))
 	assert.Equal(t, 100000, getUserQuotaFromDB(t, invitee.Id))
 }
 
-func TestSettleInviteRewardPaysBothSharesOnce(t *testing.T) {
-	setupInviteRewardTestState(t, 5000, 8000)
-
+func TestSuccessfulBillableCallsPromoteAtTen(t *testing.T) {
+	setupInviteRewardTestState(t, 8000)
 	inviter := createReserveTestUser(t, 100000)
 	invitee := createReserveTestUser(t, 100000)
-	reward := registerInviteRewardFixture(t, inviter.Id, invitee.Id, inviteRewardWindowSeconds+60)
-	setQualifyingInviteCalls(t, invitee.Id, InviteRewardRequiredCalls)
+	reward := registerInviteRewardFixture(t, inviter.Id, invitee.Id)
 
-	granted, cancelled, err := SettleInviteReward(common.GetTimestamp())
-	require.NoError(t, err)
-	assert.Equal(t, 1, granted)
-	assert.Zero(t, cancelled)
-
-	assert.Equal(t, 105000, getUserQuotaFromDB(t, invitee.Id))
+	for range InviteRewardRequiredCalls - 1 {
+		RecordSuccessfulBillableCall(invitee.Id)
+	}
 	stored := getInviteRewardFromDB(t, reward.Id)
-	assert.Equal(t, InviteRewardStateGranted, stored.State)
-	assert.NotZero(t, stored.GrantedAt)
-	assert.Empty(t, stored.CancelledNote)
+	assert.Equal(t, InviteRewardStatePending, stored.State)
+	assert.Equal(t, InviteRewardRequiredCalls-1, stored.QualifyingCalls)
+
+	RecordSuccessfulBillableCall(invitee.Id)
+	stored = getInviteRewardFromDB(t, reward.Id)
+	assert.Equal(t, InviteRewardStateEligible, stored.State)
+	assert.Equal(t, InviteRewardRequiredCalls, stored.QualifyingCalls)
+	assert.NotZero(t, stored.EligibleAt)
+	assert.Greater(t, stored.AutoGrantAt, stored.EligibleAt)
+}
+
+func TestManualClaimCreditsInviterWalletAndIsIdempotent(t *testing.T) {
+	setupInviteRewardTestState(t, 8000)
+	inviter := createReserveTestUser(t, 100000)
+	invitee := createReserveTestUser(t, 100000)
+	reward := registerInviteRewardFixture(t, inviter.Id, invitee.Id)
+	qualifyInviteReward(t, invitee.Id)
+
+	granted, alreadyGranted, err := ClaimInviteReward(inviter.Id, reward.Id)
+	require.NoError(t, err)
+	assert.True(t, granted)
+	assert.False(t, alreadyGranted)
+	assert.Equal(t, 108000, getUserQuotaFromDB(t, inviter.Id))
+	assert.Equal(t, 100000, getUserQuotaFromDB(t, invitee.Id), "new rewards do not credit invitees")
 
 	var storedInviter User
 	require.NoError(t, DB.First(&storedInviter, inviter.Id).Error)
 	assert.Equal(t, 1, storedInviter.AffCount)
-	assert.Equal(t, 8000, storedInviter.AffQuota)
+	assert.Zero(t, storedInviter.AffQuota)
 	assert.Equal(t, 8000, storedInviter.AffHistoryQuota)
+	assert.Equal(t, InviteRewardGrantManual, getInviteRewardFromDB(t, reward.Id).GrantMethod)
 
-	// A second pass must not pay the same reward again.
-	granted, cancelled, err = SettleInviteReward(common.GetTimestamp())
+	granted, alreadyGranted, err = ClaimInviteReward(inviter.Id, reward.Id)
 	require.NoError(t, err)
-	assert.Zero(t, granted)
-	assert.Zero(t, cancelled)
-	assert.Equal(t, 105000, getUserQuotaFromDB(t, invitee.Id))
+	assert.True(t, granted)
+	assert.True(t, alreadyGranted)
+	assert.Equal(t, 108000, getUserQuotaFromDB(t, inviter.Id))
 }
 
-func TestSettleInviteRewardPaysInviteeWhenInviterIsGone(t *testing.T) {
-	setupInviteRewardTestState(t, 5000, 8000)
-
+func TestAutomaticGrantRunsAtStoredMidnight(t *testing.T) {
+	setupInviteRewardTestState(t, 8000)
 	inviter := createReserveTestUser(t, 100000)
 	invitee := createReserveTestUser(t, 100000)
-	reward := registerInviteRewardFixture(t, inviter.Id, invitee.Id, inviteRewardWindowSeconds+60)
-	setQualifyingInviteCalls(t, invitee.Id, InviteRewardRequiredCalls)
-
-	require.NoError(t, DB.Exec("DELETE FROM users WHERE id = ?", inviter.Id).Error)
+	reward := registerInviteRewardFixture(t, inviter.Id, invitee.Id)
+	qualifyInviteReward(t, invitee.Id)
+	require.NoError(t, DB.Model(&XingyaInviteRewardPending{}).Where("id = ?", reward.Id).
+		Updates(map[string]any{"auto_grant_at": common.GetTimestamp() - 1}).Error)
 
 	granted, cancelled, err := SettleInviteReward(common.GetTimestamp())
 	require.NoError(t, err)
 	assert.Equal(t, 1, granted)
 	assert.Zero(t, cancelled)
-
-	assert.Equal(t, 105000, getUserQuotaFromDB(t, invitee.Id))
-	stored := getInviteRewardFromDB(t, reward.Id)
-	assert.Equal(t, InviteRewardStateGranted, stored.State)
-	assert.Equal(t, "inviter deleted; inviter share not paid", stored.CancelledNote)
+	assert.Equal(t, InviteRewardGrantAuto, getInviteRewardFromDB(t, reward.Id).GrantMethod)
+	assert.Equal(t, 108000, getUserQuotaFromDB(t, inviter.Id))
 }
 
-func TestSettleInviteRewardCancelsWhenInviteeIsGone(t *testing.T) {
-	setupInviteRewardTestState(t, 5000, 8000)
-
+func TestNewRewardCancelsWhenInviterIsDeleted(t *testing.T) {
+	setupInviteRewardTestState(t, 8000)
 	inviter := createReserveTestUser(t, 100000)
 	invitee := createReserveTestUser(t, 100000)
-	reward := registerInviteRewardFixture(t, inviter.Id, invitee.Id, inviteRewardWindowSeconds+60)
-	setQualifyingInviteCalls(t, invitee.Id, InviteRewardRequiredCalls)
+	reward := registerInviteRewardFixture(t, inviter.Id, invitee.Id)
+	qualifyInviteReward(t, invitee.Id)
+	_, err := inviter.Delete()
+	require.NoError(t, err)
 
-	require.NoError(t, DB.Exec("DELETE FROM users WHERE id = ?", invitee.Id).Error)
+	// New-format rewards are cancelled by the same transaction that deletes the
+	// inviter, so the midnight worker has no financial work left to discover.
+	assert.Equal(t, InviteRewardStateCancelled, getInviteRewardFromDB(t, reward.Id).State)
+}
+
+func TestHistoricalRewardAlsoCancelsWhenInviterIsDeleted(t *testing.T) {
+	setupInviteRewardTestState(t, 8000)
+	inviter := createReserveTestUser(t, 100000)
+	invitee := createReserveTestUser(t, 100000)
+	reward := &XingyaInviteRewardPending{
+		InviteeId: invitee.Id, InviterId: inviter.Id, InviteeQuota: 5000, InviterQuota: 8000,
+		QualifyingCalls: InviteRewardRequiredCalls, EligibleAt: common.GetTimestamp() - 60,
+		AutoGrantAt: common.GetTimestamp() + 3600, State: InviteRewardStateEligible, CreatedAt: common.GetTimestamp() - 3600,
+	}
+	require.NoError(t, DB.Create(reward).Error)
+
+	_, err := inviter.Delete()
+	require.NoError(t, err)
+	assert.Equal(t, InviteRewardStateCancelled, getInviteRewardFromDB(t, reward.Id).State)
+}
+
+func TestHistoricalRewardKeepsInviteeCompatibilityPath(t *testing.T) {
+	setupInviteRewardTestState(t, 8000)
+	inviter := createReserveTestUser(t, 100000)
+	invitee := createReserveTestUser(t, 100000)
+	reward := &XingyaInviteRewardPending{
+		InviteeId: invitee.Id, InviterId: inviter.Id, InviteeQuota: 5000, InviterQuota: 8000,
+		QualifyingCalls: InviteRewardRequiredCalls, EligibleAt: common.GetTimestamp() - 60,
+		AutoGrantAt: common.GetTimestamp() - 1, State: InviteRewardStateEligible, CreatedAt: common.GetTimestamp() - 3600,
+	}
+	require.NoError(t, DB.Create(reward).Error)
 
 	granted, cancelled, err := SettleInviteReward(common.GetTimestamp())
 	require.NoError(t, err)
-	assert.Zero(t, granted)
-	assert.Equal(t, 1, cancelled)
-
-	stored := getInviteRewardFromDB(t, reward.Id)
-	assert.Equal(t, InviteRewardStateCancelled, stored.State)
-	assert.Equal(t, "invitee deleted", stored.CancelledNote)
+	assert.Equal(t, 1, granted)
+	assert.Zero(t, cancelled)
+	assert.Equal(t, 105000, getUserQuotaFromDB(t, invitee.Id))
+	assert.Equal(t, 100000, getUserQuotaFromDB(t, inviter.Id))
+	var storedInviter User
+	require.NoError(t, DB.First(&storedInviter, inviter.Id).Error)
+	assert.Equal(t, 8000, storedInviter.AffQuota)
+	assert.Equal(t, 8000, storedInviter.AffHistoryQuota)
 }
 
-// TestSuccessCallsAfterInviteWindowOnlyCountsCallsPastTheWindow is the regression test
-// for the farming case the deferred reward exists to stop: a burst of calls made in the
-// first day must not qualify an invitee.
-func TestSuccessCallsAfterInviteWindowOnlyCountsCallsPastTheWindow(t *testing.T) {
-	truncateTables(t)
-	require.NoError(t, ensureXingyaTables(DB))
-	require.NoError(t, DB.Exec("DELETE FROM xingya_invite_reward_pending").Error)
-
-	fresh := createReserveTestUser(t, 100000)
-	require.NoError(t, DB.Model(&User{}).Where("id = ?", fresh.Id).
-		Update("created_at", common.GetTimestamp()).Error)
-	settled := createReserveTestUser(t, 100000)
-	require.NoError(t, DB.Model(&User{}).Where("id = ?", settled.Id).
-		Update("created_at", common.GetTimestamp()-inviteRewardWindowSeconds-60).Error)
-
-	for range InviteRewardRequiredCalls {
-		UpdateUserUsedQuotaAndRequestCount(fresh.Id, 100)
-		UpdateUserUsedQuotaAndRequestCount(settled.Id, 100)
-	}
-
-	var freshStored, settledStored User
-	require.NoError(t, DB.First(&freshStored, fresh.Id).Error)
-	require.NoError(t, DB.First(&settledStored, settled.Id).Error)
-	assert.Zero(t, freshStored.SuccessCallsAfterInviteWindow,
-		"calls made inside the window must not qualify an invitee")
-	assert.Equal(t, InviteRewardRequiredCalls, settledStored.SuccessCallsAfterInviteWindow)
-	// The ordinary counters keep counting regardless of the window.
-	assert.Equal(t, InviteRewardRequiredCalls, freshStored.RequestCount)
-	assert.Equal(t, InviteRewardRequiredCalls, settledStored.RequestCount)
+func TestUsageCounterDoesNotWriteLegacyInviteField(t *testing.T) {
+	setupInviteRewardTestState(t, 8000)
+	user := createReserveTestUser(t, 100000)
+	UpdateUserUsedQuotaAndRequestCount(user.Id, 100)
+	var stored User
+	require.NoError(t, DB.First(&stored, user.Id).Error)
+	assert.Equal(t, 1, stored.RequestCount)
+	assert.Zero(t, stored.SuccessCallsAfterInviteWindow)
 }

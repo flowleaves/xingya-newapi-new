@@ -11,8 +11,9 @@ import (
 const authArtifactCleanupInterval = time.Hour
 
 // StartAuthArtifactCleanup removes expired dashboard Sessions, old one-time
-// authentication flows and access tokens that expired beyond the revoked
-// session retention. Only the master instance performs cleanup.
+// authentication flows, registration-device audit rows and access tokens that
+// expired beyond the revoked session retention. Only the master instance performs
+// cleanup.
 func StartAuthArtifactCleanup() {
 	if !common.IsMasterNode {
 		return
@@ -52,5 +53,8 @@ func cleanupAuthArtifacts() {
 	accessTokenExpiredBefore := now.Unix() - int64(common.UserSessionRevokedRetentionDays)*24*60*60
 	if err := model.DeleteExpiredUserAccessTokens(accessTokenExpiredBefore); err != nil {
 		common.SysError("failed to delete expired access tokens: " + err.Error())
+	}
+	if _, err := model.PruneRegistrationDevices(); err != nil {
+		common.SysError("failed to delete expired registration devices: " + err.Error())
 	}
 }

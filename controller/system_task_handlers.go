@@ -27,18 +27,15 @@ func RegisterScheduledSystemTasks() {
 
 // inviteRewardHandler settles the deferred invite rewards.
 //
-// Registration no longer pays the invite reward; it records a promise. This job is what
-// turns a promise into quota once the invitee has been registered for at least the
-// qualifying window and has completed enough successful calls. The 24-hour wait is why
-// this is a scheduled pass rather than a hook on the invitee's next request: an invitee
-// who reaches the call count before the window elapses has no later request to trigger
-// a lazy check, so the reward would otherwise never be paid.
+// Registration no longer pays the invite reward; it records a promise. This job grants
+// eligible inviter rewards at their stored local-midnight deadline. Manual claiming can
+// settle the same row earlier, with the ledger lock providing idempotency.
 type inviteRewardHandler struct{}
 
 func (inviteRewardHandler) Type() string { return model.SystemTaskTypeInviteReward }
 
-// Enabled folds the "is there anything to settle?" check into enablement, following the
-// polling handlers below, so an idle system schedules no task row at all.
+// Enabled folds the due-reward check into enablement, so an idle system schedules no
+// task row and future eligible rewards are picked up when midnight has arrived.
 func (inviteRewardHandler) Enabled() bool { return model.HasPendingInviteReward() }
 
 func (inviteRewardHandler) Interval() time.Duration { return 5 * time.Minute }

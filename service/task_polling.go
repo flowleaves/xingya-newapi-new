@@ -626,9 +626,25 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 func finalizeTerminalTask(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
 	perfmetrics.RecordTaskResult(task, taskResult)
 	billingSettled := settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
+	if task.Status == model.TaskStatusSuccess && task.Quota > 0 && shouldRecordSuccessfulTaskCall(task) {
+		// The terminal-status CAS winner reaches this function once, so a polling
+		// retry cannot count the same completed task twice.
+		model.RecordSuccessfulBillableCall(task.UserId)
+	}
 	if task.Status == model.TaskStatusFailure && !billingSettled && task.Quota != 0 {
 		RefundTaskQuota(ctx, task, task.FailReason)
 	}
+}
+
+// shouldRecordSuccessfulTaskCall is deliberately independent of the optional
+// completion-usage adjustment. A task with a valid positive pre-charge can have
+// no completion usage to recalculate (for example, a fixed-price image task),
+// but its SUCCESS terminal state still represents one successful billable call.
+func shouldRecordSuccessfulTaskCall(task *model.Task) bool {
+	if task == nil || task.Status != model.TaskStatusSuccess {
+		return false
+	}
+	return true
 }
 
 func redactVideoResponseBody(body []byte) []byte {

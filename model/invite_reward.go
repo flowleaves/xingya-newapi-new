@@ -2,154 +2,162 @@ package model
 
 import (
 	"errors"
+	"fmt"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
-// Invite reward states. A row starts pending and moves exactly once, either to
-// granted or to cancelled, so the terminal states double as the idempotency record.
 const (
 	InviteRewardStatePending   = "pending"
+	InviteRewardStateEligible  = "eligible"
 	InviteRewardStateGranted   = "granted"
 	InviteRewardStateCancelled = "cancelled"
+	InviteRewardGrantAuto      = "auto"
+	InviteRewardGrantManual    = "manual"
 )
 
-// inviteRewardWindowSeconds is the qualifying period an invitee must complete
-// before the reward is paid.
-//
-// The requirement is "24 hours after registration AND 5 successful calls". The
-// window is applied to the calls, not to the waiting: only successful calls made at
-// least 24 hours after registration advance SuccessCallsAfterInviteWindow. A burst of
-// calls inside the first day therefore cannot qualify an invitee on its own, which is
-// the behaviour a farming account would otherwise exploit by registering, spending a
-// few calls and cashing out immediately.
-const inviteRewardWindowSeconds int64 = 24 * 60 * 60
+// InviteRewardRequiredCalls is the number of successful, billable calls needed
+// before an inviter may claim a new reward.
+const InviteRewardRequiredCalls = 10
 
-// InviteRewardRequiredCalls is how many qualifying successful calls the invitee must
-// complete before either quota share is paid.
-const InviteRewardRequiredCalls = 5
-
-// inviteRewardBatchLimit bounds how many pending rows one scheduled pass settles, so
-// a backlog cannot turn a single run into an unbounded chain of transactions.
 const inviteRewardBatchLimit = 200
 
-// XingyaInviteRewardPending is the deferred invite reward that replaced granting both
-// quota shares at registration time.
-//
-// InviteeId carries a unique index because an invitee can have exactly one reward: it
-// is the row's natural identity and the reason a duplicate insert can never double
-// promise a payout. The two quota columns are a snapshot taken at registration, so
-// changing QuotaForInviter / QuotaForInvitee later cannot silently reprice a reward
-// that was already promised.
+var (
+	ErrInviteRewardNotFound    = errors.New("invite reward not found")
+	ErrInviteRewardNotEligible = errors.New("invite reward is not eligible")
+	ErrInviteRewardCancelled   = errors.New("invite reward is cancelled")
+)
+
+// XingyaInviteRewardPending is the durable reward ledger. New rows only store the
+// inviter's reward; InviteeQuota remains for already-created legacy rows.
 type XingyaInviteRewardPending struct {
-	Id            int    `json:"id" gorm:"primaryKey;autoIncrement"`
-	InviteeId     int    `json:"invitee_id" gorm:"not null;uniqueIndex:idx_xingya_invite_reward_invitee"`
-	InviterId     int    `json:"inviter_id" gorm:"not null;index"`
-	InviteeQuota  int    `json:"invitee_quota" gorm:"not null;default:0"`
-	InviterQuota  int    `json:"inviter_quota" gorm:"not null;default:0"`
-	State         string `json:"state" gorm:"type:varchar(16);not null;default:'pending';index:idx_xingya_invite_reward_state_time,priority:1"`
-	CreatedAt     int64  `json:"created_at" gorm:"bigint;not null;index:idx_xingya_invite_reward_state_time,priority:2"`
-	GrantedAt     int64  `json:"granted_at" gorm:"bigint;not null;default:0"`
-	SettledAt     int64  `json:"settled_at" gorm:"bigint;not null;default:0"`
-	CancelledNote string `json:"cancelled_note" gorm:"type:varchar(255)"`
+	Id              int    `json:"id" gorm:"primaryKey;autoIncrement;index:idx_xingya_invite_reward_inviter,priority:2"`
+	InviteeId       int    `json:"invitee_id" gorm:"not null;uniqueIndex:idx_xingya_invite_reward_invitee"`
+	InviterId       int    `json:"inviter_id" gorm:"not null;index:idx_xingya_invite_reward_inviter,priority:1"`
+	InviteeQuota    int    `json:"invitee_quota" gorm:"not null;default:0"`
+	InviterQuota    int    `json:"inviter_quota" gorm:"not null;default:0"`
+	QualifyingCalls int    `json:"qualifying_calls" gorm:"not null;default:0"`
+	EligibleAt      int64  `json:"eligible_at" gorm:"bigint;not null;default:0"`
+	AutoGrantAt     int64  `json:"auto_grant_at" gorm:"bigint;not null;default:0;index:idx_xingya_invite_reward_state_auto_grant,priority:2"`
+	GrantMethod     string `json:"grant_method" gorm:"type:varchar(16)"`
+	State           string `json:"state" gorm:"type:varchar(16);not null;default:'pending';index:idx_xingya_invite_reward_state_auto_grant,priority:1"`
+	CreatedAt       int64  `json:"created_at" gorm:"bigint;not null"`
+	GrantedAt       int64  `json:"granted_at" gorm:"bigint;not null;default:0"`
+	SettledAt       int64  `json:"settled_at" gorm:"bigint;not null;default:0"`
+	CancelledNote   string `json:"cancelled_note" gorm:"type:varchar(255)"`
 }
 
 func (XingyaInviteRewardPending) TableName() string {
 	return "xingya_invite_reward_pending"
 }
 
-// CreateInviteRewardPending records a deferred reward for one invited registration.
-//
-// It is a no-op when no share is configured or when the inviter is unknown, matching
-// the enablement conditions the previous immediate-grant path applied. A duplicate
-// invitee is also a no-op rather than an error: the caller is a registration that has
-// already succeeded, and failing it over a bookkeeping insert would reject a valid
-// account.
-func CreateInviteRewardPending(inviteeId int, inviterId int) error {
-	if inviteeId <= 0 || inviterId <= 0 {
-		return nil
-	}
-	if common.QuotaForInvitee <= 0 && common.QuotaForInviter <= 0 {
-		return nil
-	}
+// InviteRewardSelfItem is the user-facing projection. The controller masks the
+// invitee name before it leaves the backend.
+type InviteRewardSelfItem struct {
+	XingyaInviteRewardPending
+	InviteeUsername    string `json:"invitee_username" gorm:"column:invitee_username"`
+	InviteeDisplayName string `json:"invitee_display_name" gorm:"column:invitee_display_name"`
+}
 
-	var existing int64
-	if err := DB.Model(&XingyaInviteRewardPending{}).
-		Where("invitee_id = ?", inviteeId).
-		Count(&existing).Error; err != nil {
-		return err
-	}
-	if existing > 0 {
+// CreateInviteRewardPending records a new reward promise. New rewards only pay the
+// inviter, while InviteeQuota is deliberately retained as zero for old-data safety.
+func CreateInviteRewardPending(inviteeId int, inviterId int) error {
+	if inviteeId <= 0 || inviterId <= 0 || common.QuotaForInviter <= 0 {
 		return nil
 	}
 
 	reward := &XingyaInviteRewardPending{
 		InviteeId:    inviteeId,
 		InviterId:    inviterId,
-		InviteeQuota: common.QuotaForInvitee,
+		InviteeQuota: 0,
 		InviterQuota: common.QuotaForInviter,
 		State:        InviteRewardStatePending,
 		CreatedAt:    common.GetTimestamp(),
 	}
-	// The unique index is the real guard; the count above only avoids a pointless
-	// insert in the common case. TranslateError is not enabled in this project, so a
-	// lost race surfaces as a driver-level unique violation and is reported to the
-	// caller rather than being matched by error value.
-	return DB.Create(reward).Error
+	// The unique invitee index is the actual idempotency guard. A concurrent duplicate
+	// insert is harmless after a successful registration and is therefore ignored by the
+	// database in one statement, while unrelated database errors still surface.
+	return DB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "invitee_id"}},
+		DoNothing: true,
+	}).Create(reward).Error
 }
 
-// HasPendingInviteReward reports whether any reward has reached its window and still
-// needs settling. The scheduled handler uses it as its enablement check so an idle
-// system schedules no task row at all; the query is an index range scan on
-// (state, created_at) and stops at the first match.
+// inviteRewardAutoGrantAt returns the next local midnight. The scheduler may run a
+// few minutes after it, but the ledger keeps the exact promised timestamp for the UI.
+func inviteRewardAutoGrantAt(now int64) int64 {
+	local := time.Unix(now, 0).In(time.Local)
+	return time.Date(local.Year(), local.Month(), local.Day()+1, 0, 0, 0, 0, local.Location()).Unix()
+}
+
+// RecordSuccessfulBillableCall advances only an existing pending reward. This is one
+// conditional UPDATE: PostgreSQL serializes concurrent writes to the same row, and the
+// assignments are ordered so MySQL also evaluates the promotion threshold before the
+// counter is incremented. Ordinary users therefore incur no user-row write.
+func RecordSuccessfulBillableCall(userId int) {
+	if userId <= 0 || DB == nil || !xingyaTablesReady.Load() {
+		return
+	}
+	now := common.GetTimestamp()
+	autoGrantAt := inviteRewardAutoGrantAt(now)
+	err := DB.Exec(`
+UPDATE xingya_invite_reward_pending
+SET state = CASE WHEN qualifying_calls + 1 >= ? THEN ? ELSE state END,
+    eligible_at = CASE WHEN qualifying_calls + 1 >= ? AND eligible_at = 0 THEN ? ELSE eligible_at END,
+    auto_grant_at = CASE WHEN qualifying_calls + 1 >= ? AND auto_grant_at = 0 THEN ? ELSE auto_grant_at END,
+    qualifying_calls = qualifying_calls + 1
+WHERE invitee_id = ? AND state = ? AND qualifying_calls < ?
+`, InviteRewardRequiredCalls, InviteRewardStateEligible,
+		InviteRewardRequiredCalls, now,
+		InviteRewardRequiredCalls, autoGrantAt,
+		userId, InviteRewardStatePending, InviteRewardRequiredCalls).Error
+	if err != nil {
+		common.SysError(fmt.Sprintf("failed to record successful invite call for user %d: %v", userId, err))
+	}
+}
+
+// HasPendingInviteReward reports whether the scheduled midnight pass has work.
 func HasPendingInviteReward() bool {
-	if common.QuotaForInvitee <= 0 && common.QuotaForInviter <= 0 {
+	if DB == nil || !xingyaTablesReady.Load() {
 		return false
 	}
-	var pending int64
+	var count int64
 	err := DB.Model(&XingyaInviteRewardPending{}).
-		Where("state = ? AND created_at <= ?", InviteRewardStatePending, common.GetTimestamp()-inviteRewardWindowSeconds).
-		Limit(1).
-		Count(&pending).Error
+		Where("state = ? AND auto_grant_at > 0 AND auto_grant_at <= ?", InviteRewardStateEligible, common.GetTimestamp()).
+		Limit(1).Count(&count).Error
 	if err != nil {
 		common.SysError("failed to check pending invite rewards: " + err.Error())
 		return false
 	}
-	return pending > 0
+	return count > 0
 }
 
-// SettleInviteReward passes over the pending rewards whose window has elapsed and
-// pays those whose invitee has completed the required qualifying calls.
-//
-// It returns how many rewards were granted and how many were cancelled. A reward that
-// is not yet eligible is left pending and retried on a later pass; nothing is written
-// for it, so an invitee who never reaches the call count simply never gets paid.
+// SettleInviteReward automatically grants eligible rows whose promised midnight has
+// arrived. ClaimInviteReward uses the same transaction with a different grant method.
 func SettleInviteReward(now int64) (granted int, cancelled int, err error) {
 	rewards := make([]*XingyaInviteRewardPending, 0)
-	if err = DB.Where("state = ? AND created_at <= ?", InviteRewardStatePending, now-inviteRewardWindowSeconds).
-		Order("id asc").
-		Limit(inviteRewardBatchLimit).
-		Find(&rewards).Error; err != nil {
+	err = DB.Where("state = ? AND auto_grant_at > 0 AND auto_grant_at <= ?", InviteRewardStateEligible, now).
+		Order("id asc").Limit(inviteRewardBatchLimit).Find(&rewards).Error
+	if err != nil {
 		return 0, 0, err
 	}
-
 	for _, reward := range rewards {
-		outcome, settleErr := settleOneInviteRewardTx(reward.Id)
+		outcome, _, alreadyGranted, settleErr := settleInviteRewardTx(reward.Id, InviteRewardGrantAuto, 0)
 		if settleErr != nil {
-			// One broken reward must not stop the rest of the batch. The row stays
-			// pending, so the next pass retries it.
 			common.SysError("failed to settle invite reward " + common.GetJsonString(reward.Id) + ": " + settleErr.Error())
+			continue
+		}
+		if alreadyGranted {
 			continue
 		}
 		switch outcome {
 		case InviteRewardStateGranted:
 			granted++
-			// The log entries are written after the settlement transaction has
-			// committed: under SQLite LOG_DB and DB are the same database, where
-			// recording a log from inside the transaction deadlocks.
 			RecordInviteRewardLogs(reward.Id)
 		case InviteRewardStateCancelled:
 			cancelled++
@@ -158,65 +166,98 @@ func SettleInviteReward(now int64) (granted int, cancelled int, err error) {
 	return granted, cancelled, nil
 }
 
-// settleOneInviteRewardTx settles a single reward inside its own transaction.
-//
-// The state and both credits commit together: either the invitee and the inviter are
-// paid and the row is closed, or nothing changed and the row stays pending. The row is
-// re-read under a row lock and its state re-checked, which is what makes a concurrent
-// pass or a retry after a crash unable to pay the same reward twice.
-func settleOneInviteRewardTx(rewardId int) (outcome string, err error) {
+// ClaimInviteReward lets the inviter claim an eligible row before midnight. A granted
+// row returns a successful idempotent result, allowing a client retry to refresh safely.
+func ClaimInviteReward(inviterId int, rewardId int) (granted bool, alreadyGranted bool, err error) {
+	if inviterId <= 0 || rewardId <= 0 {
+		return false, false, ErrInviteRewardNotFound
+	}
+	outcome, _, alreadyGranted, err := settleInviteRewardTx(rewardId, InviteRewardGrantManual, inviterId)
+	if err != nil {
+		return false, false, err
+	}
+	return outcome == InviteRewardStateGranted, alreadyGranted, nil
+}
+
+// settleInviteRewardTx is the one accounting boundary for automatic and manual grants.
+// It locks the reward row, checks ownership/state, credits the appropriate historical
+// path, and changes state in the same transaction.
+func settleInviteRewardTx(rewardId int, method string, ownerId int) (outcome string, inviterCredit int, alreadyGranted bool, err error) {
+	var creditedInviterId int
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		var reward XingyaInviteRewardPending
 		if err := lockForUpdate(tx).Where("id = ?", rewardId).First(&reward).Error; err != nil {
-			return err
-		}
-		if reward.State != InviteRewardStatePending {
-			return nil
-		}
-
-		var invitee User
-		if err := tx.Select("id", "success_calls_after_invite_window").
-			Where("id = ?", reward.InviteeId).First(&invitee).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				outcome = InviteRewardStateCancelled
-				return closeInviteRewardTx(tx, reward.Id, InviteRewardStateCancelled, "invitee deleted")
+				return ErrInviteRewardNotFound
 			}
 			return err
 		}
-		if invitee.SuccessCallsAfterInviteWindow < InviteRewardRequiredCalls {
+		if ownerId > 0 && reward.InviterId != ownerId {
+			return ErrInviteRewardNotFound
+		}
+		if reward.State == InviteRewardStateGranted {
+			alreadyGranted = true
+			outcome = InviteRewardStateGranted
 			return nil
 		}
+		if reward.State == InviteRewardStateCancelled {
+			return ErrInviteRewardCancelled
+		}
+		if reward.State != InviteRewardStateEligible || reward.QualifyingCalls < InviteRewardRequiredCalls {
+			return ErrInviteRewardNotEligible
+		}
 
-		now := common.GetTimestamp()
+		var inviter User
+		inviterErr := tx.Select("id").Where("id = ?", reward.InviterId).First(&inviter).Error
+		if inviterErr != nil {
+			if errors.Is(inviterErr, gorm.ErrRecordNotFound) {
+				outcome = InviteRewardStateCancelled
+				return closeInviteRewardTx(tx, reward.Id, InviteRewardStateCancelled, "inviter deleted")
+			}
+			if !errors.Is(inviterErr, gorm.ErrRecordNotFound) {
+				return inviterErr
+			}
+		}
+
+		var invitee User
+		inviteeErr := tx.Select("id").Where("id = ?", reward.InviteeId).First(&invitee).Error
+		if inviteeErr != nil && reward.InviteeQuota > 0 {
+			// A historical invitee share is still paid through its original path only
+			// while the invited account exists. There is no account to credit otherwise.
+			outcome = InviteRewardStateCancelled
+			return closeInviteRewardTx(tx, reward.Id, InviteRewardStateCancelled, "invitee deleted")
+		}
+		if inviteeErr != nil && !errors.Is(inviteeErr, gorm.ErrRecordNotFound) {
+			return inviteeErr
+		}
+
 		if reward.InviteeQuota > 0 {
 			if err := increaseUserQuotaTx(tx, reward.InviteeId, reward.InviteeQuota); err != nil {
 				return err
 			}
 		}
-
-		note := ""
-		if reward.InviterQuota > 0 {
-			var inviterExists int64
-			if err := tx.Model(&User{}).Where("id = ?", reward.InviterId).Count(&inviterExists).Error; err != nil {
-				return err
-			}
-			if inviterExists == 0 {
-				// The invitee's share is still owed, so the reward is paid and
-				// closed rather than left pending forever. The unpaid inviter share
-				// is recorded on the row so the gap stays auditable.
-				note = "inviter deleted; inviter share not paid"
-			} else if err := inviteUserTx(tx, reward.InviterId); err != nil {
-				return err
+		if reward.InviterQuota > 0 && inviterErr == nil {
+			if reward.InviteeQuota > 0 {
+				if err := inviteUserRewardTx(tx, reward.InviterId, reward.InviterQuota, false); err != nil {
+					return err
+				}
+			} else {
+				if err := inviteUserRewardTx(tx, reward.InviterId, reward.InviterQuota, true); err != nil {
+					return err
+				}
+				inviterCredit = reward.InviterQuota
+				creditedInviterId = reward.InviterId
 			}
 		}
 
+		now := common.GetTimestamp()
 		result := tx.Model(&XingyaInviteRewardPending{}).
-			Where("id = ? AND state = ?", reward.Id, InviteRewardStatePending).
+			Where("id = ? AND state = ?", reward.Id, InviteRewardStateEligible).
 			Updates(map[string]any{
-				"state":          InviteRewardStateGranted,
-				"granted_at":     now,
-				"settled_at":     now,
-				"cancelled_note": note,
+				"state":        InviteRewardStateGranted,
+				"grant_method": method,
+				"granted_at":   now,
+				"settled_at":   now,
 			})
 		if result.Error != nil {
 			return result.Error
@@ -227,13 +268,15 @@ func settleOneInviteRewardTx(rewardId int) (outcome string, err error) {
 		outcome = InviteRewardStateGranted
 		return nil
 	})
-	return outcome, err
+	if err == nil && inviterCredit > 0 && creditedInviterId > 0 {
+		syncCreditUserQuotaCache(creditedInviterId, inviterCredit, "invite reward")
+	}
+	return outcome, inviterCredit, alreadyGranted, err
 }
 
-// closeInviteRewardTx moves a reward to a terminal state that pays nothing.
 func closeInviteRewardTx(tx *gorm.DB, rewardId int, state string, note string) error {
 	return tx.Model(&XingyaInviteRewardPending{}).
-		Where("id = ? AND state = ?", rewardId, InviteRewardStatePending).
+		Where("id = ? AND state IN ?", rewardId, []string{InviteRewardStatePending, InviteRewardStateEligible}).
 		Updates(map[string]any{
 			"state":          state,
 			"settled_at":     common.GetTimestamp(),
@@ -241,8 +284,24 @@ func closeInviteRewardTx(tx *gorm.DB, rewardId int, state string, note string) e
 		}).Error
 }
 
-// GetInviteRewards returns the deferred rewards for the admin view, newest first, with
-// the caller's page window applied.
+// CancelInviteRewardsForDeletedInviter closes every unsettled reward as part of the
+// inviter deletion transaction. Historical rows keep their original quota fields for
+// compatibility, but an inviter deletion must not leave any pending payout eligible.
+func CancelInviteRewardsForDeletedInviter(tx *gorm.DB, inviterId int) error {
+	if inviterId <= 0 {
+		return nil
+	}
+	return tx.Model(&XingyaInviteRewardPending{}).
+		Where("inviter_id = ? AND state IN ?", inviterId,
+			[]string{InviteRewardStatePending, InviteRewardStateEligible}).
+		Updates(map[string]any{
+			"state":          InviteRewardStateCancelled,
+			"settled_at":     common.GetTimestamp(),
+			"cancelled_note": "inviter deleted",
+		}).Error
+}
+
+// GetInviteRewards returns the admin ledger projection.
 func GetInviteRewards(state string, startIdx int, num int) (rewards []*XingyaInviteRewardPending, total int64, err error) {
 	query := DB.Model(&XingyaInviteRewardPending{})
 	if state != "" {
@@ -256,9 +315,32 @@ func GetInviteRewards(state string, startIdx int, num int) (rewards []*XingyaInv
 	return rewards, total, err
 }
 
-// RecordInviteRewardLogs writes the user-visible log entries for a settled reward.
-// It runs outside the settlement transaction because under SQLite LOG_DB and DB are
-// the same database, where writing a log inside the transaction deadlocks.
+// GetInviteRewardsForInviter returns rows owned by one inviter for the self page.
+func GetInviteRewardsForInviter(inviterId int, startIdx int, num int) (rewards []*InviteRewardSelfItem, total int64, err error) {
+	query := DB.Table("xingya_invite_reward_pending AS r").
+		Select("r.*, u.username AS invitee_username, u.display_name AS invitee_display_name").
+		Joins("LEFT JOIN users AS u ON u.id = r.invitee_id").
+		Where("r.inviter_id = ?", inviterId)
+	if err = query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	rewards = make([]*InviteRewardSelfItem, 0)
+	err = query.Order("r.id desc").Limit(num).Offset(startIdx).Find(&rewards).Error
+	return rewards, total, err
+}
+
+// GetInviteRewardForInviter is used by the claim endpoint and keeps ownership in the
+// model layer so a guessed reward id cannot be used to affect another wallet.
+func GetInviteRewardForInviter(inviterId int, rewardId int) (*XingyaInviteRewardPending, error) {
+	var reward XingyaInviteRewardPending
+	err := DB.Where("id = ? AND inviter_id = ?", rewardId, inviterId).First(&reward).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrInviteRewardNotFound
+	}
+	return &reward, err
+}
+
+// RecordInviteRewardLogs writes logs after the accounting transaction commits.
 func RecordInviteRewardLogs(rewardId int) {
 	var reward XingyaInviteRewardPending
 	if err := DB.Where("id = ?", rewardId).First(&reward).Error; err != nil {
@@ -269,11 +351,9 @@ func RecordInviteRewardLogs(rewardId int) {
 		return
 	}
 	if reward.InviteeQuota > 0 {
-		RecordLog(reward.InviteeId, LogTypeSystem,
-			"使用邀请码赠送 "+logger.LogQuota(reward.InviteeQuota))
+		RecordLog(reward.InviteeId, LogTypeSystem, "使用邀请码赠送 "+logger.LogQuota(reward.InviteeQuota))
 	}
-	if reward.InviterQuota > 0 && reward.CancelledNote == "" {
-		RecordLog(reward.InviterId, LogTypeSystem,
-			"邀请用户赠送 "+logger.LogQuota(reward.InviterQuota))
+	if reward.InviterQuota > 0 {
+		RecordLog(reward.InviterId, LogTypeSystem, "邀请奖励发放 "+logger.LogQuota(reward.InviterQuota))
 	}
 }

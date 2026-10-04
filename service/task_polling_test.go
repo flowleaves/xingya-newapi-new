@@ -40,6 +40,49 @@ type batchPollingAdaptor struct {
 	results    map[string]*BatchTaskResult
 }
 
+func TestShouldRecordSuccessfulTaskCallRequiresSuccessfulTerminalState(t *testing.T) {
+	tests := []struct {
+		name           string
+		status         model.TaskStatus
+		perCallBilling bool
+		want           bool
+	}{
+		{
+			name:   "successful settlement",
+			status: model.TaskStatusSuccess,
+			want:   true,
+		},
+		{
+			name:   "successful task without optional usage settlement",
+			status: model.TaskStatusSuccess,
+			want:   true,
+		},
+		{
+			name:           "successful per call billing",
+			status:         model.TaskStatusSuccess,
+			perCallBilling: true,
+			want:           true,
+		},
+		{
+			name:   "failed task",
+			status: model.TaskStatusFailure,
+			want:   false,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			task := &model.Task{
+				Status: testCase.status,
+				PrivateData: model.TaskPrivateData{
+					BillingContext: &model.TaskBillingContext{PerCallBilling: testCase.perCallBilling},
+				},
+			}
+			assert.Equal(t, testCase.want, shouldRecordSuccessfulTaskCall(task))
+		})
+	}
+}
+
 func (a *batchPollingAdaptor) FetchMode() string { return "batch" }
 func (a *batchPollingAdaptor) FetchBatchTasks(_ string, _ string, tasks []*model.Task, _ string) (*http.Response, error) {
 	a.batchCalls++

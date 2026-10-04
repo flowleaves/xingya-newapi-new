@@ -81,6 +81,8 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/user/passkey/verify/finish":         accessTokenAnyRule,
 	"DELETE /api/user/passkey":                     accessTokenScopeRule("account_security:write"),
 	"GET /api/user/aff":                            accessTokenScopeRule("wallet:read"),
+	"GET /api/user/invite_rewards/self":            accessTokenScopeRule("wallet:read"),
+	"POST /api/user/invite_rewards/:id/claim":      accessTokenScopeRule("wallet:write"),
 	"GET /api/user/topup/info":                     accessTokenScopeRule("wallet:read"),
 	"GET /api/user/topup/self":                     accessTokenScopeRule("wallet:read"),
 	"POST /api/user/topup":                         accessTokenScopeRule("wallet:write"),
@@ -122,6 +124,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/user/2fa/stats":                          accessTokenScopeRule("user:read"),
 	"DELETE /api/user/:id/2fa":                         accessTokenScopeRule("user:write"),
 	"GET /api/user/invite_rewards/":                    accessTokenScopeRule("user:read"),
+	"GET /api/user/registration_devices/risk":          accessTokenScopeRule("user:read"),
 	"GET /api/user/:id/registration":                   accessTokenScopeRule("user:read"),
 
 	// router/api-router.go: /api/subscription

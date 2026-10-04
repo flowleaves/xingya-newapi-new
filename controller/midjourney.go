@@ -214,6 +214,11 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 				logger.LogError(ctx, "UpdateMidjourneyTask task error: "+err.Error())
 			} else if won && shouldReturnQuota {
 				service.RefundMidjourneyQuota(ctx, task, "构图失败")
+			} else if won && preStatus != "SUCCESS" && task.Status == "SUCCESS" && task.Quota > 0 {
+				// An accepted asynchronous submission is not a successful model call yet.
+				// Count only the first terminal success transition after the upstream result
+				// has been persisted; the CAS winner makes polling retries idempotent.
+				model.RecordSuccessfulBillableCall(task.UserId)
 			}
 		}
 	}

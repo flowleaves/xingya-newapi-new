@@ -113,12 +113,9 @@ type User struct {
 	AuthVersion          int64                      `json:"-" gorm:"type:bigint;not null;default:1;column:auth_version"`
 	AdminPermissions     map[string]map[string]bool `json:"admin_permissions,omitempty" gorm:"-:all"`
 
-	// SuccessCallsAfterInviteWindow counts successful billable settlements that
-	// happened at least the invite-reward window after this account was registered.
-	// The deferred invite reward requires InviteRewardRequiredCalls of them, which is
-	// what stops a farming account from qualifying by spending a burst of calls
-	// immediately after registering. It is not user-visible and never leaves the
-	// backend, so it stays out of the user projections and API responses.
+	// SuccessCallsAfterInviteWindow is retained for historical schema and projection
+	// compatibility. New reward progress lives in xingya_invite_reward_pending, so
+	// this legacy column is no longer written on the successful-billing hot path.
 	SuccessCallsAfterInviteWindow int `json:"-" gorm:"type:int;not null;default:0;column:success_calls_after_invite_window"`
 }
 
@@ -581,20 +578,52 @@ func inviteUser(inviterId int) error {
 	return inviteUserTx(DB, inviterId)
 }
 
-// inviteUserTx credits the inviter's affiliate counters through the caller's handle,
-// so the deferred invite reward can pay the inviter inside the settlement transaction
-// rather than through the package-global DB.
+// inviteUserTx is the legacy affiliate-ledger path used by historical rewards.
 func inviteUserTx(tx *gorm.DB, inviterId int) error {
-	result := tx.Model(&User{}).Where("id = ?", inviterId).Updates(map[string]any{
-		"aff_count":   gorm.Expr("aff_count + ?", 1),
-		"aff_quota":   gorm.Expr("aff_quota + ?", common.QuotaForInviter),
-		"aff_history": gorm.Expr("aff_history + ?", common.QuotaForInviter),
-	})
-	if result.Error != nil {
-		return result.Error
+	return inviteUserRewardTx(tx, inviterId, common.QuotaForInviter, false)
+}
+
+// inviteUserRewardTx credits one reward through the caller's transaction. New rewards
+// go straight to the wallet; the legacy path keeps its affiliate-quota semantics.
+func inviteUserRewardTx(tx *gorm.DB, inviterId int, quota int, wallet bool) error {
+	if quota <= 0 {
+		return nil
 	}
-	if result.RowsAffected == 0 {
+	updates := map[string]any{
+		"aff_count":   gorm.Expr("aff_count + ?", 1),
+		"aff_history": gorm.Expr("aff_history + ?", quota),
+	}
+	if wallet {
+		updates["quota"] = gorm.Expr("quota + ?", quota)
+		result := tx.Model(&User{}).
+			Where("id = ? AND quota <= ?", inviterId, common.MaxWalletQuota-quota).
+			Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 1 {
+			return nil
+		}
+	} else {
+		updates["aff_quota"] = gorm.Expr("aff_quota + ?", quota)
+		result := tx.Model(&User{}).Where("id = ?", inviterId).Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 1 {
+			return nil
+		}
+	}
+
+	var count int64
+	if err := tx.Model(&User{}).Where("id = ?", inviterId).Count(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
 		return gorm.ErrRecordNotFound
+	}
+	if wallet {
+		return ErrWalletQuotaLimitExceeded
 	}
 	return nil
 }
@@ -688,23 +717,19 @@ func ensureEmailAvailableWithTx(tx *gorm.DB, email string, excludeUserID int) er
 }
 
 func (user *User) Insert(inviterId int) error {
+	return user.InsertWithQuota(inviterId, common.QuotaForNewUser)
+}
+
+// InsertRegistration creates a self-service registration with the quota decided by the
+// registration fingerprint policy. A repeated fingerprint receives zero trial quota but
+// still gets a normal account.
+func (user *User) InsertRegistration(inviterId int, registrationQuota int) error {
+	return user.InsertWithQuota(inviterId, registrationQuota)
+}
+
+func (user *User) InsertWithQuota(inviterId int, quota int) error {
 	if err := DB.Transaction(func(tx *gorm.DB) error {
-		return withNormalizedEmailLock(tx, user.Email, func(tx *gorm.DB) error {
-			if err := user.prepareForInsert(tx); err != nil {
-				return err
-			}
-			user.Quota = common.QuotaForNewUser
-			user.AffCode = common.GetRandomString(4)
-
-			// 初始化用户设置，包括默认的边栏配置
-			if user.Setting == "" {
-				defaultSetting := dto.UserSetting{}
-				// 这里暂时不设置SidebarModules，因为需要在用户创建后根据角色设置
-				user.SetSetting(defaultSetting)
-			}
-
-			return tx.Create(user).Error
-		})
+		return user.InsertWithQuotaTx(tx, inviterId, quota)
 	}); err != nil {
 		return err
 	}
@@ -729,8 +754,8 @@ func (user *User) finishInsert(inviterId int) {
 		}
 	}
 
-	if common.QuotaForNewUser > 0 {
-		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
+	if user.Quota > 0 {
+		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(user.Quota)))
 	}
 	grantDeferredInviteReward(user.Id, inviterId)
 }
@@ -739,9 +764,8 @@ func (user *User) finishInsert(inviterId int) {
 // reward once the invitee qualifies.
 //
 // The reward used to be paid here, at registration, to both sides at once. It is now
-// only promised: the invitee must still be around after 24 hours and have completed
-// the required number of successful calls, which is checked by the scheduled settlement
-// pass. A failure to record the promise must not reject an account that has already
+// only promised: the invitee must complete the required number of successful calls.
+// A failure to record the promise must not reject an account that has already
 // been created, so it is logged rather than returned.
 func grantDeferredInviteReward(inviteeId int, inviterId int) {
 	if inviterId == 0 || !operation_setting.IsPaymentComplianceConfirmed() {
@@ -760,11 +784,22 @@ func (user *User) FinishInsert(inviterId int) {
 // This is used for OAuth registration where user creation and binding need to be atomic.
 // Post-creation tasks (sidebar config, logs, inviter rewards) are handled after the transaction commits.
 func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
+	return user.InsertWithQuotaTx(tx, inviterId, common.QuotaForNewUser)
+}
+
+// InsertRegistrationWithTx is the transactional registration variant used by OAuth
+// flows. The device audit row is written after commit so bookkeeping failure cannot
+// reject an account that has already been created.
+func (user *User) InsertRegistrationWithTx(tx *gorm.DB, inviterId int, registrationQuota int) error {
+	return user.InsertWithQuotaTx(tx, inviterId, registrationQuota)
+}
+
+func (user *User) InsertWithQuotaTx(tx *gorm.DB, inviterId int, quota int) error {
 	return withNormalizedEmailLock(tx, user.Email, func(tx *gorm.DB) error {
 		if err := user.prepareForInsert(tx); err != nil {
 			return err
 		}
-		user.Quota = common.QuotaForNewUser
+		user.Quota = quota
 		user.AffCode = common.GetRandomString(4)
 
 		// 初始化用户设置
@@ -793,8 +828,8 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 		}
 	}
 
-	if common.QuotaForNewUser > 0 {
-		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
+	if user.Quota > 0 {
+		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(user.Quota)))
 	}
 	grantDeferredInviteReward(user.Id, inviterId)
 }
@@ -993,6 +1028,9 @@ func (user *User) delete(identity *AuthSessionIdentity) (int64, error) {
 		if err != nil {
 			return err
 		}
+		if err := CancelInviteRewardsForDeletedInviter(tx, user.Id); err != nil {
+			return err
+		}
 		return tx.Delete(user).Error
 	}); err != nil {
 		return 0, err
@@ -1029,6 +1067,9 @@ func (user *User) HardDelete() (int64, error) {
 			}
 		}
 		if err := deleteUserAuthenticationData(tx, user.Id); err != nil {
+			return err
+		}
+		if err := CancelInviteRewardsForDeletedInviter(tx, user.Id); err != nil {
 			return err
 		}
 		return tx.Unscoped().Delete(user).Error
@@ -1456,19 +1497,13 @@ func UpdateUserLastLoginAt(id int) {
 	}
 }
 
-// UpdateUserUsedQuotaAndRequestCount applies one successful billable settlement.
-//
-// This is the counting point for the deferred invite reward. A settled, billable
-// request is what counts as a "successful call", so errors, rejections and never-billed
-// requests cannot advance an invitee toward qualifying. The Grok violation-fee path
-// (service/violation_fee.go) also calls this function, but a violated request reports
-// zero total tokens, and PostConsumeQuota zeroes the quota and skips the counter update
-// in that case, so a penalty can never stand in for a successful call.
+// UpdateUserUsedQuotaAndRequestCount updates the user's aggregate usage counters.
+// Invite-reward progress is kept in the reward ledger and is advanced explicitly by
+// successful billing paths, so ordinary users do not receive a reward-counter write.
 func UpdateUserUsedQuotaAndRequestCount(id int, quota int) {
 	if common.BatchUpdateEnabled {
 		addNewRecord(BatchUpdateTypeUsedQuota, id, quota)
 		addNewRecord(BatchUpdateTypeRequestCount, id, 1)
-		addNewRecord(BatchUpdateTypeInviteCall, id, 1)
 		return
 	}
 	updateUserUsedQuotaAndRequestCount(id, quota, 1)
@@ -1485,26 +1520,13 @@ func UpdateUserUsedQuota(id int, quota int) {
 	}
 }
 
-// inviteCallCreditExpr builds the SQL fragment that advances the deferred invite
-// reward's qualifying-call counter.
-//
-// The 24-hour gate lives inside the statement rather than in Go because this runs in
-// the settlement path under concurrency. A read-then-write would let two settled
-// requests both observe the pre-window state, and splitting it out would add a second
-// statement plus a lock ordering constraint on the hottest table in the system. The
-// CASE is portable across the three supported databases.
-func inviteCallCreditExpr() string {
-	return "success_calls_after_invite_window + CASE WHEN created_at <= ? THEN 1 ELSE 0 END"
-}
-
 // updateUserUsedQuotaAndRequestCount applies one successful settlement to the user's
-// counters, including the deferred invite reward's qualifying-call counter.
+// aggregate counters. Reward progress is intentionally updated in its own ledger row.
 func updateUserUsedQuotaAndRequestCount(id int, quota int, count int) {
 	err := DB.Model(&User{}).Where("id = ?", id).Updates(
 		map[string]any{
-			"used_quota":                        gorm.Expr("used_quota + ?", quota),
-			"request_count":                     gorm.Expr("request_count + ?", count),
-			"success_calls_after_invite_window": gorm.Expr(inviteCallCreditExpr(), common.GetTimestamp()-inviteRewardWindowSeconds),
+			"used_quota":    gorm.Expr("used_quota + ?", quota),
+			"request_count": gorm.Expr("request_count + ?", count),
 		},
 	).Error
 	if err != nil {
@@ -1525,10 +1547,9 @@ func updateUserQuotaUsedQuotaAndRequestCount(id int, quota int, usedQuota int, r
 
 	err := DB.Model(&User{}).Where("id = ?", id).Updates(
 		map[string]any{
-			"quota":                             gorm.Expr("quota + ?", quota),
-			"used_quota":                        gorm.Expr("used_quota + ?", usedQuota),
-			"request_count":                     gorm.Expr("request_count + ?", requestCount),
-			"success_calls_after_invite_window": gorm.Expr(inviteCallCreditExpr(), common.GetTimestamp()-inviteRewardWindowSeconds),
+			"quota":         gorm.Expr("quota + ?", quota),
+			"used_quota":    gorm.Expr("used_quota + ?", usedQuota),
+			"request_count": gorm.Expr("request_count + ?", requestCount),
 		},
 	).Error
 	if err != nil {
