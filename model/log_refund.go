@@ -66,11 +66,16 @@ func GetCumulativeRefundStats(userId int) (count int64, totalQuota int64, err er
 	return
 }
 
-// GetRefundedLogIds 获取用户已补回的日志ID集合（用于内存过滤）
-func GetRefundedLogIds(userId int) (map[int]bool, error) {
+// GetRefundedLogIds checks the supplied candidates when present. With no
+// candidates it preserves the legacy all-history behavior for callers outside
+// the self-refund list path.
+func GetRefundedLogIds(userId int, logIds ...int) (map[int]bool, error) {
 	var refunds []LogRefund
-	err := DB.Model(&LogRefund{}).
-		Where("user_id = ?", userId).
+	tx := DB.Model(&LogRefund{}).Where("user_id = ?", userId)
+	if len(logIds) > 0 {
+		tx = tx.Where("log_id IN ?", logIds)
+	}
+	err := tx.
 		Select("log_id").
 		Find(&refunds).Error
 	if err != nil {
@@ -185,14 +190,13 @@ func creditWalletQuotaTx(tx *gorm.DB, userId int, amount int) error {
 	return nil
 }
 
-// SyncUserQuotaCacheAfterCredit 在钱包入账事务提交后，让缓存立即反映新余额。
-// 不这么做的话，预扣费仍按旧余额判定，补回到账的额度在缓存过期前不可用。
-//
-// 独立失败域：缓存未命中或 Redis 不可用时 UpdateUserCache 本来就要回源数据库，
-// 所以这里的失败不影响正确性，只记录日志。
+// SyncUserQuotaCacheAfterCredit invalidates the user cache for legacy callers
+// that do not have the credited amount. New credit paths should use the
+// amount-aware syncCreditUserQuotaCache helper so an outstanding reservation
+// is preserved.
 func SyncUserQuotaCacheAfterCredit(userId int) {
-	if err := cacheIncrUserQuota(userId, 0); err != nil {
-		common.SysLog(fmt.Sprintf("failed to sync user quota cache after refund for user %d: %v", userId, err))
+	if err := invalidateUserCache(userId); err != nil {
+		common.SysLog(fmt.Sprintf("failed to invalidate user quota cache after refund for user %d: %v", userId, err))
 	}
 }
 
@@ -239,7 +243,7 @@ func DoSelfRefundWallet(userId int, logId int, baseQuota int, refundAmount int, 
 
 	// 事务已提交：让缓存立即反映新余额，否则预扣费仍按旧值判定，
 	// 补回到账的额度在缓存过期前不可用。
-	SyncUserQuotaCacheAfterCredit(userId)
+	syncCreditUserQuotaCache(userId, refundAmount, "self refund")
 
 	// 5. 记录补回日志（事务外：SQLite 下 LOG_DB==DB，事务内写日志会死锁）
 	RecordRefundLog(userId, refundAmount, refundLogContent(reason, refundAmount, requestId, 0))

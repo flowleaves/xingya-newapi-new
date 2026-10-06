@@ -9,6 +9,7 @@ import (
 // SelfRefundSetting 自助补回功能配置
 type SelfRefundSetting struct {
 	Enabled        bool    `json:"enabled"`          // 是否启用自助补回功能
+	OnlyPerRequest bool    `json:"only_per_request"` // Restrict refunds to request-priced logs; false preserves legacy scope.
 	Ratio          float64 `json:"ratio"`            // 补回比例（默认 0.5 = 50%）
 	WindowHours    int     `json:"window_hours"`     // 可补回时间窗口（小时，默认 48）
 	DailyMaxCount  int     `json:"daily_max_count"`  // 每日最大补回次数（默认 3）

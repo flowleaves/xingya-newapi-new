@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -142,6 +143,25 @@ func TestDoSelfRefundWalletCreditsOnce(t *testing.T) {
 	var refundCount int64
 	require.NoError(t, DB.Model(&LogRefund{}).Where("log_id = ?", log.Id).Count(&refundCount).Error)
 	require.Equal(t, int64(1), refundCount)
+}
+
+func TestDoSelfRefundWalletPreservesOutstandingCacheReservation(t *testing.T) {
+	prepareRefundFixture(t)
+	server := useUserCacheMiniRedis(t)
+	user := newRefundUser(t, "cache-credit", 1000)
+	log := newConsumeLog(t, user.Id, 500, "req-cache-credit")
+	require.NoError(t, populateUserCache(*user))
+	// The cache already reserves 200 for an in-flight call not yet persisted.
+	result, err := cacheTryReserveUserQuota(user.Id, 200)
+	require.NoError(t, err)
+	require.Equal(t, cacheQuotaOK, result)
+	require.NoError(t, DoSelfRefundWallet(user.Id, log.Id, 500, 250, "empty_response", log.RequestId, noLimits))
+	assert.Equal(t, "1050", server.HGet(getUserCacheKey(user.Id), "Quota"))
+	var after User
+	require.NoError(t, DB.First(&after, user.Id).Error)
+	assert.Equal(t, 1250, after.Quota)
+	require.Error(t, DoSelfRefundWallet(user.Id, log.Id, 500, 250, "empty_response", log.RequestId, noLimits))
+	assert.Equal(t, "1050", server.HGet(getUserCacheKey(user.Id), "Quota"), "replay must not credit the cache")
 }
 
 // The wallet credit is bounded by common.MaxWalletQuota, the same ceiling the

@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/glebarez/sqlite"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -88,6 +89,86 @@ func TestJudgeSelfRefundOffersEmptyResponseRefund(t *testing.T) {
 	require.Equal(t, 500, info.RefundAmount)
 	require.Equal(t, "wallet", info.FundingSource)
 	require.Equal(t, "empty_response", info.Reason)
+}
+
+func TestJudgeSelfRefundPerRequestOnly(t *testing.T) {
+	enableRefundSetting(t)
+	for _, tc := range []struct {
+		name     string
+		metadata string
+		eligible bool
+	}{
+		{"legacy request", `"model_price":0.01`, true},
+		{"legacy token", `"model_price":-1`, false},
+		{"legacy free", `"model_price":0`, false},
+		{"missing metadata", `"model_ratio":1`, false},
+		{"invalid price", `"model_price":"0.01"`, false},
+		{"expression request", `"billing_mode":"tiered_expr","billing_unit":"request","fixed_price":0.01`, true},
+		{"expression token with stale price", `"billing_mode":"tiered_expr","billing_unit":"token","model_price":0.01`, false},
+		{"expression missing unit", `"billing_mode":"tiered_expr","model_price":0.01,"fixed_price":0.01`, false},
+		{"unknown mode", `"billing_mode":"unknown","model_price":0.01`, false},
+		{"subscription request", `"billing_mode":"tiered_expr","billing_unit":"request","billing_source":"subscription","subscription_id":23,"subscription_consumed":15000`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			log := chatLog(1000)
+			log.Other = `{"request_path":"/v1/chat/completions",` + tc.metadata + `}`
+			operation_setting.GetSelfRefundSetting().OnlyPerRequest = false
+			assert.NotNil(t, JudgeSelfRefund(log, nil), "disabled restriction preserves existing eligibility")
+			operation_setting.GetSelfRefundSetting().OnlyPerRequest = true
+			assert.Equal(t, tc.eligible, JudgeSelfRefund(log, nil) != nil)
+		})
+	}
+}
+
+func TestDoSelfRefundRechecksPerRequestRestriction(t *testing.T) {
+	db := setupRefundServiceDB(t)
+	enableRefundSetting(t)
+	user := &model.User{Username: "refund-switch", Password: "password", AffCode: "refund-switch", Quota: 1000}
+	require.NoError(t, db.Create(user).Error)
+	log := chatLog(1000)
+	log.UserId = user.Id
+	log.Other = `{"request_path":"/v1/chat/completions","model_price":-1}`
+	require.NoError(t, db.Create(log).Error)
+	logs, total, err := GetRefundableLogs(user.Id, RefundableLogQuery{RequestId: log.RequestId})
+	require.NoError(t, err)
+	assert.Len(t, logs, 1)
+	assert.Equal(t, 1, total)
+
+	operation_setting.GetSelfRefundSetting().OnlyPerRequest = true
+	_, err = DoSelfRefund(user.Id, log.Id, log.RequestId)
+	require.Error(t, err)
+	var after model.User
+	require.NoError(t, db.First(&after, user.Id).Error)
+	assert.Equal(t, 1000, after.Quota)
+}
+
+func TestGetRefundableLogsPaginatesAfterEligibilityFiltering(t *testing.T) {
+	db := setupRefundServiceDB(t)
+	enableRefundSetting(t)
+	operation_setting.GetSelfRefundSetting().OnlyPerRequest = true
+	for i, price := range []float64{0.01, 0.01, -1} {
+		log := chatLog(1000)
+		log.Id = 0
+		log.RequestId = []string{"old-request", "new-request", "token-request"}[i]
+		other, err := common.Marshal(map[string]any{"request_path": "/v1/chat/completions", "model_price": price})
+		require.NoError(t, err)
+		log.Other = string(other)
+		require.NoError(t, db.Create(log).Error)
+	}
+	for _, tc := range []struct {
+		start int
+		id    string
+	}{{0, "new-request"}, {1, "old-request"}, {2, ""}} {
+		logs, total, err := GetRefundableLogs(5, RefundableLogQuery{StartIdx: tc.start, Num: 1})
+		require.NoError(t, err)
+		assert.Equal(t, 2, total)
+		if tc.id == "" {
+			assert.Empty(t, logs)
+			continue
+		}
+		require.Len(t, logs, 1)
+		assert.Equal(t, tc.id, logs[0].RequestId)
+	}
 }
 
 // A ratio that is tiny enough to round the refund down to zero must not be

@@ -137,6 +137,7 @@ export interface GetRefundableResponse {
   data: {
     setting: {
       enabled: boolean
+      only_per_request: boolean
       ratio: number
       window_hours: number
       daily_max_count: number
@@ -148,7 +149,7 @@ export interface GetRefundableResponse {
       }
     }
     logs: RefundableLogItem[]
-    /** Candidate rows the server matched, before per-row eligibility judgment. */
+    /** Eligible rows within the newest 500 candidates in the refund window. */
     total: number
   }
 }

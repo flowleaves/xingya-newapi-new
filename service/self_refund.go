@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -74,6 +75,9 @@ func JudgeSelfRefund(log *model.Log, refundedLogIds map[int]bool) *RefundableLog
 	// 通用排除：非 chat 路径（request_path 不是 chat/completions、responses 或 messages）
 	requestPath, _ := other["request_path"].(string)
 	if !isChatRequestPath(requestPath) {
+		return nil
+	}
+	if setting.OnlyPerRequest && !isPerRequestBilling(other) {
 		return nil
 	}
 
@@ -156,6 +160,24 @@ func JudgeSelfRefund(log *model.Log, refundedLogIds map[int]bool) *RefundableLog
 	}
 
 	return nil
+}
+
+// Judge the consumed request's billing metadata, never today's model pricing.
+// Expression logs must not fall back to a stale legacy price on token tiers.
+func isPerRequestBilling(other map[string]any) bool {
+	mode, _ := other["billing_mode"].(string)
+	unit, _ := other["billing_unit"].(string)
+	if mode == "tiered_expr" {
+		return unit == "request"
+	}
+	if mode != "" && mode != "ratio" {
+		return false
+	}
+	if unit != "" && unit != "request" {
+		return false
+	}
+	price, ok := other["model_price"].(float64)
+	return ok && price > 0 && !math.IsNaN(price) && !math.IsInf(price, 0)
 }
 
 // isChatRequestPath 判断是否为 chat/completions、responses 或 messages 路径
@@ -289,17 +311,15 @@ func GetRefundableLogs(userId int, query RefundableLogQuery) ([]*RefundableLogIn
 	now := time.Now().Unix()
 	minCreatedAt := now - windowSeconds
 
-	// 获取已补回集合
-	refundedIds, err := model.GetRefundedLogIds(userId)
-	if err != nil {
-		return nil, 0, err
-	}
-
 	// 单条日志查询：供日志详情内联补回卡使用
 	if query.selectorSet() {
 		log, err := resolveRefundLog(userId, query)
 		if err != nil {
 			return []*RefundableLogInfo{}, 0, nil
+		}
+		refundedIds, err := model.GetRefundedLogIds(userId, log.Id)
+		if err != nil {
+			return nil, 0, err
 		}
 		if info := JudgeSelfRefund(log, refundedIds); info != nil {
 			return []*RefundableLogInfo{info}, 1, nil
@@ -307,16 +327,21 @@ func GetRefundableLogs(userId int, query RefundableLogQuery) ([]*RefundableLogIn
 		return []*RefundableLogInfo{}, 0, nil
 	}
 
-	// 扫描上限 500 条
-	scanLimit := 500
-	if query.Num > 0 && query.Num < scanLimit {
-		scanLimit = query.Num
-	}
-
-	// 查询符合条件的日志（type=2 + 窗口内 + (completion=0 OR is_stream=1)）
-	logs, total, err := model.GetRefundableCandidates(userId, minCreatedAt, scanLimit)
+	// Keep database work bounded; paginate eligible results, not raw candidates.
+	logs, _, err := model.GetRefundableCandidates(userId, minCreatedAt, 500)
 	if err != nil {
 		return nil, 0, err
+	}
+	ids := make([]int, len(logs))
+	for i, log := range logs {
+		ids[i] = log.Id
+	}
+	refundedIds := map[int]bool{}
+	if len(ids) > 0 {
+		refundedIds, err = model.GetRefundedLogIds(userId, ids...)
+		if err != nil {
+			return nil, 0, err
+		}
 	}
 
 	// 逐条判定
@@ -327,7 +352,13 @@ func GetRefundableLogs(userId int, query RefundableLogQuery) ([]*RefundableLogIn
 		}
 	}
 
-	return result, int(total), nil
+	total := len(result)
+	start := min(max(query.StartIdx, 0), total)
+	end := total
+	if query.Num > 0 {
+		end = start + min(query.Num, total-start)
+	}
+	return result[start:end], total, nil
 }
 
 // DoSelfRefund 执行自助补回编排
@@ -353,7 +384,7 @@ func DoSelfRefund(userId int, logId int, requestId string) (*RefundableLogInfo, 
 	}
 
 	// 2. 获取已补回集合
-	refundedIds, err := model.GetRefundedLogIds(userId)
+	refundedIds, err := model.GetRefundedLogIds(userId, log.Id)
 	if err != nil {
 		return nil, fmt.Errorf("查询失败")
 	}
@@ -403,6 +434,7 @@ func GetRefundableSetting(userId int) (map[string]interface{}, error) {
 	}
 	return map[string]interface{}{
 		"enabled":          setting.Enabled,
+		"only_per_request": setting.OnlyPerRequest,
 		"ratio":            setting.Ratio,
 		"window_hours":     setting.WindowHours,
 		"daily_max_count":  setting.DailyMaxCount,

@@ -137,7 +137,9 @@ export function SelfRefundPage() {
               </CardTitle>
               <CardDescription>
                 {t(
-                  'Refund usage where you paid but received no content (empty responses or truncated streams).'
+                  setting?.only_per_request
+                    ? 'Refund per-request charges for empty responses or truncated streams.'
+                    : 'Refund usage where you paid but received no content (empty responses or truncated streams).'
                 )}
               </CardDescription>
             </CardHeader>
@@ -214,9 +216,7 @@ export function SelfRefundPage() {
               <CardHeader>
                 <CardTitle>{t('Eligible logs')}</CardTitle>
                 <CardDescription>
-                  {t(
-                    'Requests within the window that qualify for a refund.'
-                  )}
+                  {t('Requests within the window that qualify for a refund.')}
                 </CardDescription>
               </CardHeader>
               <CardContent>{renderEligibleLogs()}</CardContent>
@@ -330,10 +330,7 @@ function RefundableRow(props: {
           onClick={props.onRefund}
         >
           {props.loading ? (
-            <Loader2
-              className='mr-1 size-4 animate-spin'
-              aria-hidden='true'
-            />
+            <Loader2 className='mr-1 size-4 animate-spin' aria-hidden='true' />
           ) : (
             <BadgeCheck className='mr-1 size-4' aria-hidden='true' />
           )}

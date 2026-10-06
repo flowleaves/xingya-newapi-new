@@ -44,6 +44,7 @@ import { useUpdateOption } from '../hooks/use-update-option'
 // the only range the server can honor (SafeRatio clamps to [0,1] as well).
 const schema = z.object({
   enabled: z.boolean(),
+  only_per_request: z.boolean(),
   ratio: z.coerce.number().min(0).max(1),
   window_hours: z.coerce.number().int().min(1).max(720),
   daily_max_count: z.coerce.number().int().min(0).max(100),
@@ -56,6 +57,7 @@ type Values = z.infer<typeof schema>
 interface SelfRefundSettingsSectionProps {
   defaultValues: {
     enabled: boolean
+    only_per_request: boolean
     ratio: number
     window_hours: number
     daily_max_count: number
@@ -85,6 +87,10 @@ export function SelfRefundSettingsSection(
     try {
       const updates = [
         { key: 'self_refund_setting.enabled', value: values.enabled },
+        {
+          key: 'self_refund_setting.only_per_request',
+          value: values.only_per_request,
+        },
         { key: 'self_refund_setting.ratio', value: values.ratio },
         { key: 'self_refund_setting.window_hours', value: values.window_hours },
         {
@@ -121,7 +127,7 @@ export function SelfRefundSettingsSection(
   return (
     <SettingsSection title={t('Self-Refund Settings')}>
       <Form {...form}>
-        <form className='space-y-6'>
+        <div className='space-y-6'>
           <SettingsForm>
             <FormField
               control={form.control}
@@ -133,6 +139,31 @@ export function SelfRefundSettingsSection(
                     <FormDescription>
                       {t(
                         'Auto-refund for empty responses and truncated streams'
+                      )}
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='only_per_request'
+              render={({ field }) => (
+                <FormItem className='flex items-center justify-between gap-3 rounded-lg border p-3'>
+                  <div className='min-w-0 space-y-0.5'>
+                    <FormLabel>
+                      {t('Only refund per-request billing')}
+                    </FormLabel>
+                    <FormDescription>
+                      {t(
+                        'When enabled, only request-priced logs are eligible for self-refund.'
                       )}
                     </FormDescription>
                   </div>
@@ -241,12 +272,12 @@ export function SelfRefundSettingsSection(
           </SettingsForm>
 
           <SettingsPageFormActions
-            onSave={onSave}
+            onSave={form.handleSubmit(onSave)}
             onReset={onReset}
             isSaving={isSaving}
             isSaveDisabled={!form.formState.isDirty}
           />
-        </form>
+        </div>
       </Form>
     </SettingsSection>
   )

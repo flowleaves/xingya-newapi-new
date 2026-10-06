@@ -45,7 +45,8 @@ const getModelDefaults = (settings: BillingSettings) => ({
   PluginBillingExpr: settings['billing_setting.plugin_billing_expr'],
 })
 
-const getGroupDefaults = (settings: BillingSettings) => ({  TopupGroupRatio: settings.TopupGroupRatio,
+const getGroupDefaults = (settings: BillingSettings) => ({
+  TopupGroupRatio: settings.TopupGroupRatio,
   GroupRatio: settings.GroupRatio,
   UserUsableGroups: settings.UserUsableGroups,
   GroupGroupRatio: settings.GroupGroupRatio,
@@ -253,6 +254,8 @@ const BILLING_SECTIONS = [
       <SelfRefundSettingsSection
         defaultValues={{
           enabled: settings['self_refund_setting.enabled'] ?? false,
+          only_per_request:
+            settings['self_refund_setting.only_per_request'] ?? false,
           ratio: settings['self_refund_setting.ratio'] ?? 0.5,
           window_hours: settings['self_refund_setting.window_hours'] ?? 48,
           daily_max_count: settings['self_refund_setting.daily_max_count'] ?? 3,

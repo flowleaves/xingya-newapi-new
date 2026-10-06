@@ -118,6 +118,7 @@ const defaultBillingSettings: BillingSettings = {
   'checkin_setting.c_max_reward': 30,
   'checkin_setting.fallback_reward': 5,
   'self_refund_setting.enabled': false,
+  'self_refund_setting.only_per_request': false,
   'self_refund_setting.ratio': 0.5,
   'self_refund_setting.window_hours': 48,
   'self_refund_setting.daily_max_count': 3,

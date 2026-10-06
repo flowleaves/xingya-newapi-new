@@ -368,6 +368,7 @@ export type BillingSettings = {
   'checkin_setting.c_max_reward': number
   'checkin_setting.fallback_reward': number
   'self_refund_setting.enabled': boolean
+  'self_refund_setting.only_per_request': boolean
   'self_refund_setting.ratio': number
   'self_refund_setting.window_hours': number
   'self_refund_setting.daily_max_count': number
