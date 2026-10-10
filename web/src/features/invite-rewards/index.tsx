@@ -30,11 +30,37 @@ import { getAffiliateCode } from '@/features/wallet/api'
 import { generateAffiliateLink } from '@/features/wallet/lib'
 import { formatQuota, formatTimestampToDate } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
+import {
+  DEFAULT_CURRENCY_CONFIG,
+  useSystemConfigStore,
+} from '@/stores/system-config-store'
 
 import { claimInviteReward, getInviteRewards } from './api'
 import type { InviteReward, InviteRewardState } from './types'
 
 const PAGE_SIZE = 20
+
+/**
+ * Internal-quota units per unit of platform currency (芽点), mirroring the server's
+ * check-in tier divider so a spend figure is never shown with a hardcoded rate.
+ * The admin-facing QuotaPerUnit reaches the client through the persisted currency
+ * config, so the conversion is derived from the same value the backend enforces.
+ */
+function quotaPerTier(quotaPerUnit: number): number {
+  const perUnit =
+    Number.isFinite(quotaPerUnit) && quotaPerUnit > 0
+      ? quotaPerUnit
+      : DEFAULT_CURRENCY_CONFIG.quotaPerUnit
+  return perUnit / 100
+}
+
+/** Render an internal quota amount as platform currency (芽点). */
+function formatTierAmount(quota: number, perTier: number): string {
+  if (!Number.isFinite(quota) || perTier <= 0) {
+    return '—'
+  }
+  return `🌱${formatQuota(Math.max(0, quota) / perTier)}`
+}
 
 function stateVariant(state: InviteRewardState) {
   if (state === 'eligible') return 'warning' as const
@@ -62,9 +88,19 @@ function grantTimeLabel(reward: InviteReward, t: (value: string) => string) {
   return t('At midnight')
 }
 
-function RewardRow({ reward, requiredCalls }: { reward: InviteReward; requiredCalls: number }) {
+function RewardRow({
+  reward,
+  requiredCalls,
+  requiredTier,
+}: {
+  reward: InviteReward
+  requiredCalls: number
+  requiredTier: number
+}) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const quotaPerUnit = useSystemConfigStore((s) => s.config.currency.quotaPerUnit)
+  const perTier = quotaPerTier(quotaPerUnit)
   const claim = useMutation({
     mutationFn: () => claimInviteReward(reward.id),
     onSuccess: async (response) => {
@@ -94,9 +130,16 @@ function RewardRow({ reward, requiredCalls }: { reward: InviteReward; requiredCa
         </div>
       </TableCell>
       <TableCell>
-        <span className='font-mono tabular-nums'>
-          {Math.min(reward.qualifying_calls, requiredCalls)} / {requiredCalls}
-        </span>
+        <div className='flex min-w-28 flex-col gap-0.5 font-mono text-xs tabular-nums'>
+          <span>
+            {t('Calls')} {Math.min(reward.qualifying_calls, requiredCalls)} /{' '}
+            {requiredCalls}
+          </span>
+          <span className='text-muted-foreground'>
+            {formatTierAmount(reward.qualifying_quota, perTier)} / 🌱
+            {formatQuota(requiredTier)}
+          </span>
+        </div>
       </TableCell>
       <TableCell className='font-mono'>{formatQuota(reward.inviter_quota)}</TableCell>
       <TableCell>
@@ -198,7 +241,7 @@ export function InviteRewardsPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>{t('Invited account')}</TableHead>
-                    <TableHead>{t('Successful calls')}</TableHead>
+                    <TableHead>{t('Qualifying progress')}</TableHead>
                     <TableHead>{t('Reward')}</TableHead>
                     <TableHead>{t('Status')}</TableHead>
                     <TableHead>{t('Automatic grant')}</TableHead>
@@ -207,7 +250,12 @@ export function InviteRewardsPage() {
                 </TableHeader>
                 <TableBody>
                   {data?.items?.length ? data.items.map((reward) => (
-                    <RewardRow key={reward.id} reward={reward} requiredCalls={data.required_calls} />
+                    <RewardRow
+                      key={reward.id}
+                      reward={reward}
+                      requiredCalls={data.required_calls}
+                      requiredTier={data.required_consume_tier}
+                    />
                   )) : (
                     <TableRow><TableCell colSpan={6} className='text-muted-foreground py-10 text-center'>{t('No invite rewards yet.')}</TableCell></TableRow>
                   )}
@@ -219,8 +267,8 @@ export function InviteRewardsPage() {
           <Card size='sm'>
             <CardContent className='grid gap-3 text-sm sm:grid-cols-2'>
               <div className='flex gap-2'><Info className='text-muted-foreground mt-0.5 size-4 shrink-0' /><span>{t('Only successful billable model calls count. Free, failed, zero-quota, refunded, and violation charges do not count.')}</span></div>
-              <div className='flex gap-2'><Clock3 className='text-muted-foreground mt-0.5 size-4 shrink-0' /><span>{t('After 10 calls, you can claim immediately. Otherwise the reward is granted automatically at local midnight.')}</span></div>
-              <div className='text-muted-foreground sm:col-span-2'>{t('After the invitee completes 10 calls, the reward can be claimed after it is granted or will be automatically granted at 24:00 local time.')}</div>
+              <div className='flex gap-2'><Clock3 className='text-muted-foreground mt-0.5 size-4 shrink-0' /><span>{t('Once both conditions are met you can claim immediately; otherwise the reward is granted automatically at local midnight.')}</span></div>
+              <div className='text-muted-foreground sm:col-span-2'>{t('An invited account qualifies after {{calls}} successful billable calls and 🌱{{tier}} of cumulative spend.', { calls: data?.required_calls ?? 0, tier: formatQuota(data?.required_consume_tier ?? 0) })}</div>
             </CardContent>
           </Card>
 

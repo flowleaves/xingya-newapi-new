@@ -461,7 +461,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if billingErr != nil {
 		logger.LogError(ctx, "error settling billing: "+billingErr.Error())
 	} else if summary.hasBillableUsage() && summary.Quota > 0 {
-		model.RecordSuccessfulBillableCall(relayInfo.UserId)
+		model.RecordSuccessfulBillableCall(relayInfo.UserId, summary.Quota)
 	}
 
 	logModel := summary.ModelName

@@ -138,7 +138,7 @@ func RelayMidjourneyNotify(c *gin.Context) *dto.MidjourneyResponse {
 		}
 	}
 	if updated && previousStatus != "SUCCESS" && midjourneyTask.Status == "SUCCESS" && midjourneyTask.Quota > 0 {
-		model.RecordSuccessfulBillableCall(midjourneyTask.UserId)
+		model.RecordSuccessfulBillableCall(midjourneyTask.UserId, midjourneyTask.Quota)
 	}
 
 	return nil
@@ -296,7 +296,7 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 		model.UpdateUserUsedQuotaAndRequestCount(info.UserId, midjourneyTask.Quota)
 		model.UpdateChannelUsedQuota(billingChannelId, midjourneyTask.Quota)
 		if midjourneyTask.Quota > 0 {
-			model.RecordSuccessfulBillableCall(info.UserId)
+			model.RecordSuccessfulBillableCall(info.UserId, midjourneyTask.Quota)
 		}
 	}
 	c.Writer.WriteHeader(mjResp.StatusCode)
@@ -673,7 +673,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, midjourneyTask.Quota)
 		model.UpdateChannelUsedQuota(billingChannelId, midjourneyTask.Quota)
 		if midjourneyTask.Status == "SUCCESS" && midjourneyTask.Quota > 0 {
-			model.RecordSuccessfulBillableCall(relayInfo.UserId)
+			model.RecordSuccessfulBillableCall(relayInfo.UserId, midjourneyTask.Quota)
 		}
 	}
 

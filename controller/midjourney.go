@@ -218,7 +218,7 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 				// An accepted asynchronous submission is not a successful model call yet.
 				// Count only the first terminal success transition after the upstream result
 				// has been persisted; the CAS winner makes polling retries idempotent.
-				model.RecordSuccessfulBillableCall(task.UserId)
+				model.RecordSuccessfulBillableCall(task.UserId, task.Quota)
 			}
 		}
 	}

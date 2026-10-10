@@ -93,7 +93,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 	if task != nil && task.Status == model.TaskStatusSuccess && task.Quota > 0 {
 		// Asynchronous tasks are counted when polling reaches SUCCESS; this branch is
 		// only for an immediate successful result returned by the submit request.
-		model.RecordSuccessfulBillableCall(info.UserId)
+		model.RecordSuccessfulBillableCall(info.UserId, task.Quota)
 	}
 }
 

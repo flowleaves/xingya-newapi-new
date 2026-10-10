@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -55,12 +56,29 @@ func ListInviteRewardsSelf(c *gin.Context) {
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(rewards)
 	common.ApiSuccess(c, gin.H{
-		"items":          pageInfo.Items,
-		"total":          pageInfo.Total,
-		"page":           pageInfo.Page,
-		"page_size":      pageInfo.PageSize,
-		"required_calls": model.InviteRewardRequiredCalls,
+		"items":     pageInfo.Items,
+		"total":     pageInfo.Total,
+		"page":      pageInfo.Page,
+		"page_size": pageInfo.PageSize,
+		// Both conditions are published so the UI states the same rule the backend
+		// enforces. The spend gate travels as platform currency (芽点) instead of USD
+		// because that is the unit the page renders; deriving it here keeps the
+		// frontend free of a hardcoded exchange rate.
+		"required_calls":        model.InviteRewardRequiredCalls,
+		"required_consume_usd":  operation_setting.GetInviteRewardSetting().RequiredConsumeUSD,
+		"required_consume_tier": quotaToPlatformCurrency(model.RequiredConsumeQuota()),
 	})
+}
+
+// quotaToPlatformCurrency converts an internal quota amount into platform currency
+// (芽点) using the same runtime divisor the check-in tiers use, so every 芽点 figure in
+// the app is derived from one configurable exchange rate.
+func quotaToPlatformCurrency(quota int) float64 {
+	tier := common.QuotaPerUnit / 100.0
+	if tier <= 0 {
+		return 0
+	}
+	return float64(quota) / tier
 }
 
 // ClaimInviteRewardSelf performs an inviter-owned manual claim. The model layer

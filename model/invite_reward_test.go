@@ -40,10 +40,31 @@ func getInviteRewardFromDB(t *testing.T, id int) XingyaInviteRewardPending {
 	return reward
 }
 
+// recordSuccessfulCall records one successful billable call carrying the given spend.
+func recordSuccessfulCall(t *testing.T, userId int, quota int) {
+	t.Helper()
+	RecordSuccessfulBillableCall(userId, quota)
+}
+
+// qualifyInviteReward satisfies the call count only, leaving the spend gate to the
+// caller so a test can isolate which condition it is exercising.
 func qualifyInviteReward(t *testing.T, userId int) {
 	t.Helper()
 	for range InviteRewardRequiredCalls {
-		RecordSuccessfulBillableCall(userId)
+		recordSuccessfulCall(t, userId, 0)
+	}
+}
+
+// satisfyInviteReward completes both published conditions the way production does: the
+// spend accrues across the calls rather than being written afterwards. A single call
+// carries a value that is a multiple of the gate, so a 1:1 mapping is exact and reading
+// the gate once keeps the fixture consistent even if the gate changes mid-test.
+func satisfyInviteReward(t *testing.T, userId int) {
+	t.Helper()
+	gate := RequiredConsumeQuota()
+	require.Positive(t, gate, "fixture expects a configured spend gate")
+	for range InviteRewardRequiredCalls {
+		recordSuccessfulCall(t, userId, gate)
 	}
 }
 
@@ -67,19 +88,77 @@ func TestSuccessfulBillableCallsPromoteAtTen(t *testing.T) {
 	invitee := createReserveTestUser(t, 100000)
 	reward := registerInviteRewardFixture(t, inviter.Id, invitee.Id)
 
+	gate := RequiredConsumeQuota()
+	require.Positive(t, gate, "fixture expects a configured spend gate")
+	perCall := gate / InviteRewardRequiredCalls
 	for range InviteRewardRequiredCalls - 1 {
-		RecordSuccessfulBillableCall(invitee.Id)
+		recordSuccessfulCall(t, invitee.Id, perCall)
 	}
 	stored := getInviteRewardFromDB(t, reward.Id)
 	assert.Equal(t, InviteRewardStatePending, stored.State)
 	assert.Equal(t, InviteRewardRequiredCalls-1, stored.QualifyingCalls)
 
-	RecordSuccessfulBillableCall(invitee.Id)
+	// The final call completes the count and the spend at the same time.
+	recordSuccessfulCall(t, invitee.Id, gate-perCall*(InviteRewardRequiredCalls-1))
 	stored = getInviteRewardFromDB(t, reward.Id)
 	assert.Equal(t, InviteRewardStateEligible, stored.State)
 	assert.Equal(t, InviteRewardRequiredCalls, stored.QualifyingCalls)
+	assert.Equal(t, gate, stored.QualifyingQuota)
 	assert.NotZero(t, stored.EligibleAt)
 	assert.Greater(t, stored.AutoGrantAt, stored.EligibleAt)
+}
+
+// TestSpendGateBlocksPromotionUntilTheThresholdIsReached covers the second published
+// condition: completing the call count alone must not make a reward claimable.
+func TestSpendGateBlocksPromotionUntilTheThresholdIsReached(t *testing.T) {
+	setupInviteRewardTestState(t, 8000)
+	inviter := createReserveTestUser(t, 100000)
+	invitee := createReserveTestUser(t, 100000)
+	reward := registerInviteRewardFixture(t, inviter.Id, invitee.Id)
+	gate := RequiredConsumeQuota()
+	require.Positive(t, gate, "fixture expects a configured spend gate")
+
+	// Enough calls, but each carries too little spend to accumulate the gate.
+	require.NoError(t, DB.Model(&XingyaInviteRewardPending{}).Where("id = ?", reward.Id).
+		Update("qualifying_quota", gate-1).Error)
+	qualifyInviteReward(t, invitee.Id)
+
+	stored := getInviteRewardFromDB(t, reward.Id)
+	assert.Equal(t, InviteRewardStatePending, stored.State,
+		"the call count alone must not promote a reward")
+	assert.Equal(t, InviteRewardRequiredCalls, stored.QualifyingCalls)
+	assert.Equal(t, gate-1, stored.QualifyingQuota)
+
+	// The final unit of spend promotes it.
+	recordSuccessfulCall(t, invitee.Id, 1)
+	stored = getInviteRewardFromDB(t, reward.Id)
+	assert.Equal(t, InviteRewardStateEligible, stored.State)
+	assert.Equal(t, gate, stored.QualifyingQuota)
+	assert.NotZero(t, stored.EligibleAt)
+}
+
+// TestSettleRefusesWhenRecordedSpendFallsShortOfTheGate guards a row that was promoted
+// before the spend gate existed, or under a lower gate an administrator has since raised.
+func TestSettleRefusesWhenRecordedSpendFallsShortOfTheGate(t *testing.T) {
+	setupInviteRewardTestState(t, 8000)
+	inviter := createReserveTestUser(t, 100000)
+	invitee := createReserveTestUser(t, 100000)
+	reward := &XingyaInviteRewardPending{
+		InviteeId: invitee.Id, InviterId: inviter.Id, InviterQuota: 8000,
+		QualifyingCalls: InviteRewardRequiredCalls, QualifyingQuota: 0,
+		EligibleAt:  common.GetTimestamp() - 60,
+		AutoGrantAt: common.GetTimestamp() - 1, State: InviteRewardStateEligible,
+		CreatedAt: common.GetTimestamp() - 3600,
+	}
+	require.NoError(t, DB.Create(reward).Error)
+
+	granted, cancelled, err := SettleInviteReward(common.GetTimestamp())
+	require.NoError(t, err)
+	assert.Zero(t, granted)
+	assert.Zero(t, cancelled)
+	assert.Equal(t, InviteRewardStateEligible, getInviteRewardFromDB(t, reward.Id).State,
+		"an under-spent reward stays eligible for a later pass")
+	assert.Equal(t, 100000, getUserQuotaFromDB(t, inviter.Id))
 }
 
 func TestManualClaimCreditsInviterWalletAndIsIdempotent(t *testing.T) {
@@ -87,7 +166,7 @@ func TestManualClaimCreditsInviterWalletAndIsIdempotent(t *testing.T) {
 	inviter := createReserveTestUser(t, 100000)
 	invitee := createReserveTestUser(t, 100000)
 	reward := registerInviteRewardFixture(t, inviter.Id, invitee.Id)
-	qualifyInviteReward(t, invitee.Id)
+	satisfyInviteReward(t, invitee.Id)
 
 	granted, alreadyGranted, err := ClaimInviteReward(inviter.Id, reward.Id)
 	require.NoError(t, err)
@@ -115,7 +194,7 @@ func TestAutomaticGrantRunsAtStoredMidnight(t *testing.T) {
 	inviter := createReserveTestUser(t, 100000)
 	invitee := createReserveTestUser(t, 100000)
 	reward := registerInviteRewardFixture(t, inviter.Id, invitee.Id)
-	qualifyInviteReward(t, invitee.Id)
+	satisfyInviteReward(t, invitee.Id)
 	require.NoError(t, DB.Model(&XingyaInviteRewardPending{}).Where("id = ?", reward.Id).
 		Updates(map[string]any{"auto_grant_at": common.GetTimestamp() - 1}).Error)
 
@@ -132,7 +211,7 @@ func TestNewRewardCancelsWhenInviterIsDeleted(t *testing.T) {
 	inviter := createReserveTestUser(t, 100000)
 	invitee := createReserveTestUser(t, 100000)
 	reward := registerInviteRewardFixture(t, inviter.Id, invitee.Id)
-	qualifyInviteReward(t, invitee.Id)
+	satisfyInviteReward(t, invitee.Id)
 	_, err := inviter.Delete()
 	require.NoError(t, err)
 
@@ -147,7 +226,8 @@ func TestHistoricalRewardAlsoCancelsWhenInviterIsDeleted(t *testing.T) {
 	invitee := createReserveTestUser(t, 100000)
 	reward := &XingyaInviteRewardPending{
 		InviteeId: invitee.Id, InviterId: inviter.Id, InviteeQuota: 5000, InviterQuota: 8000,
-		QualifyingCalls: InviteRewardRequiredCalls, EligibleAt: common.GetTimestamp() - 60,
+		QualifyingCalls: InviteRewardRequiredCalls, QualifyingQuota: RequiredConsumeQuota(),
+		EligibleAt:  common.GetTimestamp() - 60,
 		AutoGrantAt: common.GetTimestamp() + 3600, State: InviteRewardStateEligible, CreatedAt: common.GetTimestamp() - 3600,
 	}
 	require.NoError(t, DB.Create(reward).Error)
@@ -163,7 +243,8 @@ func TestHistoricalRewardKeepsInviteeCompatibilityPath(t *testing.T) {
 	invitee := createReserveTestUser(t, 100000)
 	reward := &XingyaInviteRewardPending{
 		InviteeId: invitee.Id, InviterId: inviter.Id, InviteeQuota: 5000, InviterQuota: 8000,
-		QualifyingCalls: InviteRewardRequiredCalls, EligibleAt: common.GetTimestamp() - 60,
+		QualifyingCalls: InviteRewardRequiredCalls, QualifyingQuota: RequiredConsumeQuota(),
+		EligibleAt:  common.GetTimestamp() - 60,
 		AutoGrantAt: common.GetTimestamp() - 1, State: InviteRewardStateEligible, CreatedAt: common.GetTimestamp() - 3600,
 	}
 	require.NoError(t, DB.Create(reward).Error)

@@ -11,6 +11,8 @@ export interface InviteReward {
   invitee_quota: number
   inviter_quota: number
   qualifying_calls: number
+  /** Cumulative billable spend by the invitee, in internal quota units. */
+  qualifying_quota: number
   eligible_at: number
   auto_grant_at: number
   grant_method: 'auto' | 'manual' | ''
@@ -28,7 +30,15 @@ export interface InviteRewardsResponse {
   total: number
   page: number
   page_size: number
+  /** How many successful billable calls the invitee must complete. */
   required_calls: number
+  /** Spend gate as published in USD. */
+  required_consume_usd: number
+  /**
+   * Spend gate in platform currency (芽点). Derived by the backend from the configured
+   * exchange rate, so the UI never hardcodes the conversion.
+   */
+  required_consume_tier: number
 }
 
 export interface InviteRewardApiResponse {

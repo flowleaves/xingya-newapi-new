@@ -629,7 +629,7 @@ func finalizeTerminalTask(ctx context.Context, adaptor TaskPollingAdaptor, task 
 	if task.Status == model.TaskStatusSuccess && task.Quota > 0 && shouldRecordSuccessfulTaskCall(task) {
 		// The terminal-status CAS winner reaches this function once, so a polling
 		// retry cannot count the same completed task twice.
-		model.RecordSuccessfulBillableCall(task.UserId)
+		model.RecordSuccessfulBillableCall(task.UserId, task.Quota)
 	}
 	if task.Status == model.TaskStatusFailure && !billingSettled && task.Quota != 0 {
 		RefundTaskQuota(ctx, task, task.FailReason)

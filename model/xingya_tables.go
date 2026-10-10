@@ -50,7 +50,7 @@ func ensureXingyaTables(db *gorm.DB) error {
 // and SQLite; the global upstream migration list deliberately does not own these tables.
 func migrateXingyaTables(db *gorm.DB) error {
 	reward := &XingyaInviteRewardPending{}
-	for _, column := range []string{"QualifyingCalls", "EligibleAt", "AutoGrantAt", "GrantMethod"} {
+	for _, column := range []string{"QualifyingCalls", "QualifyingQuota", "EligibleAt", "AutoGrantAt", "GrantMethod"} {
 		if db.Migrator().HasColumn(reward, column) {
 			continue
 		}

@@ -374,6 +374,7 @@ export type BillingSettings = {
   'self_refund_setting.daily_max_count': number
   'self_refund_setting.daily_max_quota': number
   'self_refund_setting.min_refund_quota': number
+  'invite_reward_setting.required_consume_usd': number
 }
 
 export type OperationsSettings = {

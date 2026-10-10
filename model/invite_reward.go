@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -21,9 +22,10 @@ const (
 	InviteRewardGrantManual    = "manual"
 )
 
-// InviteRewardRequiredCalls is the number of successful, billable calls needed
-// before an inviter may claim a new reward.
-const InviteRewardRequiredCalls = 10
+// InviteRewardRequiredCalls is the number of successful, billable calls the invited
+// account must complete before the inviter may claim a new reward. It is re-exported
+// from the operation settings so the ledger and the admin configuration cannot drift.
+const InviteRewardRequiredCalls = operation_setting.InviteRewardRequiredCalls
 
 const inviteRewardBatchLimit = 200
 
@@ -42,6 +44,7 @@ type XingyaInviteRewardPending struct {
 	InviteeQuota    int    `json:"invitee_quota" gorm:"not null;default:0"`
 	InviterQuota    int    `json:"inviter_quota" gorm:"not null;default:0"`
 	QualifyingCalls int    `json:"qualifying_calls" gorm:"not null;default:0"`
+	QualifyingQuota int    `json:"qualifying_quota" gorm:"not null;default:0"`
 	EligibleAt      int64  `json:"eligible_at" gorm:"bigint;not null;default:0"`
 	AutoGrantAt     int64  `json:"auto_grant_at" gorm:"bigint;not null;default:0;index:idx_xingya_invite_reward_state_auto_grant,priority:2"`
 	GrantMethod     string `json:"grant_method" gorm:"type:varchar(16)"`
@@ -95,27 +98,55 @@ func inviteRewardAutoGrantAt(now int64) int64 {
 	return time.Date(local.Year(), local.Month(), local.Day()+1, 0, 0, 0, 0, local.Location()).Unix()
 }
 
-// RecordSuccessfulBillableCall advances only an existing pending reward. This is one
-// conditional UPDATE: PostgreSQL serializes concurrent writes to the same row, and the
-// assignments are ordered so MySQL also evaluates the promotion threshold before the
-// counter is incremented. Ordinary users therefore incur no user-row write.
-func RecordSuccessfulBillableCall(userId int) {
+// inviteRewardSpendGate returns the cumulative spend the invited account must reach, in
+// internal quota units. Zero means no spend requirement.
+func inviteRewardSpendGate() int {
+	return RequiredConsumeQuota()
+}
+
+// RequiredConsumeQuota exposes the configured spend gate in internal quota units so the
+// API layer can render the same rule the ledger enforces.
+func RequiredConsumeQuota() int {
+	return operation_setting.GetInviteRewardSetting().RequiredConsumeQuota(common.QuotaPerUnit)
+}
+
+// RecordSuccessfulBillableCall advances only an existing pending reward, accumulating
+// both the qualifying call count and the qualifying spend.
+//
+// This is one conditional UPDATE. PostgreSQL serializes concurrent writes to the same
+// row, and the assignments are ordered so MySQL also evaluates the promotion threshold
+// before the counters are incremented. Ordinary users therefore incur no user-row write,
+// and an account that was never invited costs nothing.
+//
+// Both published conditions must hold at once: the invited account has to complete the
+// required number of successful billable calls *and* spend the configured amount. The
+// spend gate is read once per call so an administrator changing it takes effect without
+// a restart; already-promoted rows keep their eligibility because the state check below
+// only matches pending rows.
+func RecordSuccessfulBillableCall(userId int, quotaConsumed int) {
 	if userId <= 0 || DB == nil || !xingyaTablesReady.Load() {
 		return
 	}
+	quotaDelta := quotaConsumed
+	if quotaDelta < 0 {
+		quotaDelta = 0
+	}
 	now := common.GetTimestamp()
 	autoGrantAt := inviteRewardAutoGrantAt(now)
+	spendGate := inviteRewardSpendGate()
 	err := DB.Exec(`
 UPDATE xingya_invite_reward_pending
-SET state = CASE WHEN qualifying_calls + 1 >= ? THEN ? ELSE state END,
-    eligible_at = CASE WHEN qualifying_calls + 1 >= ? AND eligible_at = 0 THEN ? ELSE eligible_at END,
-    auto_grant_at = CASE WHEN qualifying_calls + 1 >= ? AND auto_grant_at = 0 THEN ? ELSE auto_grant_at END,
-    qualifying_calls = qualifying_calls + 1
-WHERE invitee_id = ? AND state = ? AND qualifying_calls < ?
-`, InviteRewardRequiredCalls, InviteRewardStateEligible,
-		InviteRewardRequiredCalls, now,
-		InviteRewardRequiredCalls, autoGrantAt,
-		userId, InviteRewardStatePending, InviteRewardRequiredCalls).Error
+SET state = CASE WHEN qualifying_calls + 1 >= ? AND qualifying_quota + ? >= ? THEN ? ELSE state END,
+    eligible_at = CASE WHEN qualifying_calls + 1 >= ? AND qualifying_quota + ? >= ? AND eligible_at = 0 THEN ? ELSE eligible_at END,
+    auto_grant_at = CASE WHEN qualifying_calls + 1 >= ? AND qualifying_quota + ? >= ? AND auto_grant_at = 0 THEN ? ELSE auto_grant_at END,
+    qualifying_calls = qualifying_calls + 1,
+    qualifying_quota = qualifying_quota + ?
+WHERE invitee_id = ? AND state = ?
+`, InviteRewardRequiredCalls, quotaDelta, spendGate, InviteRewardStateEligible,
+		InviteRewardRequiredCalls, quotaDelta, spendGate, now,
+		InviteRewardRequiredCalls, quotaDelta, spendGate, autoGrantAt,
+		quotaDelta,
+		userId, InviteRewardStatePending).Error
 	if err != nil {
 		common.SysError(fmt.Sprintf("failed to record successful invite call for user %d: %v", userId, err))
 	}
@@ -204,6 +235,13 @@ func settleInviteRewardTx(rewardId int, method string, ownerId int) (outcome str
 			return ErrInviteRewardCancelled
 		}
 		if reward.State != InviteRewardStateEligible || reward.QualifyingCalls < InviteRewardRequiredCalls {
+			return ErrInviteRewardNotEligible
+		}
+		// Both published conditions are re-checked under the row lock. The promotion that
+		// set the eligible state already required the spend gate, so this guards against a
+		// row promoted before the gate existed, or one promoted under a lower gate that an
+		// administrator has since raised.
+		if spendGate := inviteRewardSpendGate(); spendGate > 0 && reward.QualifyingQuota < spendGate {
 			return ErrInviteRewardNotEligible
 		}
 
