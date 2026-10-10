@@ -73,6 +73,8 @@ type Announcement = {
   publishDate: string
   type: 'default' | 'ongoing' | 'success' | 'warning' | 'error'
   extra?: string
+  /** Opts this announcement into the once-per-browser blocking dialog. */
+  popup?: boolean
 }
 
 type AnnouncementsSectionProps = {
@@ -91,6 +93,7 @@ const announcementSchema = z.object({
     .string()
     .max(100, 'Extra must be less than 100 characters')
     .optional(),
+  popup: z.boolean(),
 })
 
 type AnnouncementFormValues = z.infer<typeof announcementSchema>
@@ -153,6 +156,7 @@ export function AnnouncementsSection({
       publishDate: new Date().toISOString(),
       type: 'default',
       extra: '',
+      popup: false,
     },
   })
 
@@ -196,6 +200,7 @@ export function AnnouncementsSection({
       publishDate: new Date().toISOString(),
       type: 'default',
       extra: '',
+      popup: false,
     })
     setShowDialog(true)
   }
@@ -207,6 +212,7 @@ export function AnnouncementsSection({
       publishDate: announcement.publishDate,
       type: announcement.type,
       extra: announcement.extra || '',
+      popup: announcement.popup === true,
     })
     setShowDialog(true)
   }
@@ -421,6 +427,20 @@ export function AnnouncementsSection({
               cell: (announcement) => announcement.extra || '-',
             },
             {
+              id: 'popup',
+              header: t('Popup'),
+              cell: (announcement) =>
+                announcement.popup === true ? (
+                  <StatusBadge
+                    label={t('Popup')}
+                    variant='info'
+                    copyable={false}
+                  />
+                ) : (
+                  '-'
+                ),
+            },
+            {
               id: 'actions',
               header: t('Actions'),
               cell: (announcement) => (
@@ -582,6 +602,20 @@ export function AnnouncementsSection({
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name='popup'
+              render={({ field }) => (
+                <SettingsSwitchField
+                  checked={field.value === true}
+                  onCheckedChange={field.onChange}
+                  label={t('Show as a popup dialog')}
+                  description={t(
+                    'Display once per browser as a blocking dialog after the publish date. Unticked announcements stay in the notification bell.'
+                  )}
+                />
               )}
             />
           </form>

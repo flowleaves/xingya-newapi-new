@@ -35,6 +35,12 @@ interface AnnouncementDetailModalProps {
   } | null
 }
 
+/**
+ * The one rendering of an announcement's full text.
+ *
+ * Shared by the dashboard panel and the blocking popup so the two cannot drift; the
+ * popup previously carried its own copy of this composition.
+ */
 export function AnnouncementDetailModal({
   open,
   onOpenChange,

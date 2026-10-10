@@ -20,44 +20,10 @@ import { useQuery } from '@tanstack/react-query'
 import { useState, useMemo } from 'react'
 
 import { useStatus } from '@/hooks/use-status'
+import { getAnnouncementKey } from '@/lib/announcement-key'
 import { getNotice } from '@/lib/api'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { useNotificationStore } from '@/stores/notification-store'
-
-function hashString(input: string): string {
-  let hash = 0
-  if (!input) return '0'
-
-  for (let i = 0; i < input.length; i += 1) {
-    const chr = input.charCodeAt(i)
-    hash = (hash << 5) - hash + chr
-    hash |= 0
-  }
-
-  return hash.toString(36)
-}
-
-/**
- * Generate a unique key for an announcement
- * Prefer backend id, fall back to a content hash so edits register
- */
-function getAnnouncementKey(item: Record<string, unknown>): string {
-  if (!item) return ''
-
-  if (item.id !== undefined && item.id !== null) {
-    return `id:${item.id}`
-  }
-
-  const fingerprint = JSON.stringify({
-    publishDate: (item?.publishDate as string) || '',
-    content: ((item?.content as string) || '').trim(),
-    extra: ((item?.extra as string) || '').trim(),
-    type: (item?.type as string) || '',
-    title: ((item?.title as string) || '').trim(),
-    link: ((item?.link as string) || '').trim(),
-  })
-  return `hash:${hashString(fingerprint)}`
-}
 
 /**
  * Hook to manage notifications (Notice + Announcements)
@@ -83,13 +49,25 @@ export function useNotifications() {
   // Fetch Announcements from status
   const { status, loading: statusLoading } = useStatus()
   const announcementsEnabled = status?.announcements_enabled ?? false
-  const announcements = useMemo<Record<string, unknown>[]>(() => {
+  const allAnnouncements = useMemo<Record<string, unknown>[]>(() => {
     if (!announcementsEnabled) return []
-    return ((status?.announcements || []) as Record<string, unknown>[]).slice(
-      0,
-      20
-    )
+    return (status?.announcements || []) as Record<string, unknown>[]
   }, [announcementsEnabled, status?.announcements])
+
+  // The bell shows a bounded recent slice so a long announcement history does not make
+  // the popover unbounded.
+  const announcements = useMemo(
+    () => allAnnouncements.slice(0, 20),
+    [allAnnouncements]
+  )
+
+  // The popup gets its own slice, filtered first. Deriving it from the bell slice would
+  // let 20 newer non-popup announcements hide a popup announcement completely, and the
+  // operator's only signal would be that the dialog never appeared.
+  const popupAnnouncements = useMemo(
+    () => allAnnouncements.filter((item) => item.popup === true).slice(0, 20),
+    [allAnnouncements]
+  )
 
   // Notification store
   const {
@@ -170,6 +148,8 @@ export function useNotifications() {
     // Data
     notice: noticeContent,
     announcements,
+    /** Opted-in announcements for the blocking dialog, independent of the bell slice. */
+    popupAnnouncements,
     loading: noticeLoading || statusLoading,
 
     // Unread counts

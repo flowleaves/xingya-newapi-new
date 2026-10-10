@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 
 import { IconBadge } from '@/components/ui/icon-badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { AnnouncementDetailModal } from '@/features/announcements/components/announcement-detail-dialog'
 import { useAnnouncements } from '@/features/dashboard/hooks/use-status-data'
 import { getPreviewText } from '@/features/dashboard/lib'
 import type { AnnouncementItem } from '@/features/dashboard/types'
@@ -30,7 +31,6 @@ import { formatDateTimeObject } from '@/lib/time'
 import { cn } from '@/lib/utils'
 
 import { PanelWrapper } from '../ui/panel-wrapper'
-import { AnnouncementDetailModal } from './announcement-detail-dialog'
 
 const AnnouncementStatusDot = memo(function AnnouncementStatusDot(props: {
   type?: string

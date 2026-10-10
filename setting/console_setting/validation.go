@@ -186,6 +186,15 @@ func validateAnnouncements(announcementsStr string) error {
 				return fmt.Errorf("第%d个公告的说明长度不能超过100字符", i+1)
 			}
 		}
+		// popup opts an announcement into the blocking dialog shown once per browser.
+		// GetAnnouncements passes the stored object through verbatim, so the flag only has
+		// to survive validation; a non-boolean is rejected rather than silently ignored,
+		// because a dropped flag looks exactly like "the operator never ticked it".
+		if popup, exists := ann["popup"]; exists {
+			if _, ok := popup.(bool); !ok {
+				return fmt.Errorf("第%d个公告的弹窗标记必须是布尔值", i+1)
+			}
+		}
 	}
 	return nil
 }

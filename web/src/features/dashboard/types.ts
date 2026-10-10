@@ -261,6 +261,11 @@ export interface AnnouncementItem {
   publishDate?: string
   type?: 'default' | 'ongoing' | 'success' | 'warning' | 'error'
   extra?: string
+  /**
+   * Marks the announcement for the once-per-browser blocking dialog. Absent or false
+   * means the announcement is only reachable from the notification bell.
+   */
+  popup?: boolean
 }
 
 // ============================================================================
