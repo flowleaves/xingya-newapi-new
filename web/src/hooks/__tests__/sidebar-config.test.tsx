@@ -122,6 +122,17 @@ describe('security sidebar visibility', () => {
   })
 })
 
+describe('model square sidebar entry', () => {
+  it('lists the model square under General and links to the pricing directory', () => {
+    const { result } = sidebarFor()
+    const general = result.current.find((group) => group.id === 'general')
+
+    expect(
+      general?.items.find((item) => item.title === 'Model Square')
+    ).toMatchObject({ url: '/pricing' })
+  })
+})
+
 describe('audit log sidebar entry', () => {
   it('admin settings default Audit Logs to visible and preserve its independent toggle when saved', () => {
     const config = parseSidebarModulesAdmin(

@@ -21,6 +21,7 @@ import {
   BadgeCheck,
   Banknote,
   Box,
+  Boxes,
   ClipboardList,
   CreditCard,
   FileText,
@@ -86,6 +87,13 @@ export function useSidebarData(): SidebarData {
             title: t('Dashboard'),
             url: '/dashboard/models',
             icon: LayoutDashboard,
+          },
+          {
+            // The public pricing directory is the model square; this entry only adds a
+            // navigation shortcut to it, so the route and page stay single-sourced.
+            title: t('Model Square'),
+            url: '/pricing',
+            icon: Boxes,
           },
           {
             title: t('API Keys'),
