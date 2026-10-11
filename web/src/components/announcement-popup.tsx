@@ -37,16 +37,19 @@ import { useNotificationStore } from '@/stores/notification-store'
  */
 export function AnnouncementPopup() {
   const { popupAnnouncements } = useNotifications()
-  const isAnnouncementRead = useNotificationStore(
-    (state) => state.isAnnouncementRead
+  const readAnnouncementKeys = useNotificationStore(
+    (state) => state.readAnnouncementKeys
   )
   const markAnnouncementsRead = useNotificationStore(
     (state) => state.markAnnouncementsRead
   )
 
   const due = useMemo(
-    () => dismissableAnnouncements(popupAnnouncements, isAnnouncementRead),
-    [popupAnnouncements, isAnnouncementRead]
+    () =>
+      dismissableAnnouncements(popupAnnouncements, (key) =>
+        readAnnouncementKeys.includes(key)
+      ),
+    [popupAnnouncements, readAnnouncementKeys]
   )
 
   const handleOpenChange = useCallback(

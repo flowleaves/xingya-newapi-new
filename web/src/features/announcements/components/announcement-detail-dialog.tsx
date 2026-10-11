@@ -20,7 +20,8 @@ import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
 import { RichContent } from '@/components/rich-content'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { formatDateTimeObject } from '@/lib/time'
 
 interface AnnouncementDetailModalProps {
@@ -51,38 +52,64 @@ export function AnnouncementDetailModal({
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
-      title={t('Announcement Details')}
+      title={announcement?.title?.trim() || t('Announcement Details')}
       description={
-        announcement?.publishDate
-          ? `${t('Published:')} ${formatDateTimeObject(new Date(announcement.publishDate))}`
-          : undefined
+        announcement?.tag || announcement?.publishDate ? (
+          <span className='flex flex-wrap items-center gap-x-3 gap-y-2'>
+            {announcement?.tag && (
+              <Badge
+                variant='secondary'
+                className='h-auto max-w-full break-words whitespace-normal'
+              >
+                {announcement.tag}
+              </Badge>
+            )}
+            {announcement?.publishDate && (
+              <span>
+                {t('Published:')}{' '}
+                <time dateTime={announcement.publishDate}>
+                  {formatDateTimeObject(new Date(announcement.publishDate))}
+                </time>
+              </span>
+            )}
+          </span>
+        ) : undefined
       }
-      contentClassName='sm:max-w-lg'
+      contentClassName='rounded-2xl sm:max-w-xl'
       contentHeight='auto'
-      bodyClassName='space-y-4'
+      headerClassName='gap-3'
+      titleClassName='pr-6 text-lg leading-snug font-semibold break-words sm:text-xl'
+      bodyClassName='flex flex-col gap-5 py-2'
+      footerClassName='sm:py-4'
+      footer={
+        <Button
+          className='min-w-24'
+          aria-label={t('Close dialog')}
+          onClick={() => onOpenChange(false)}
+        >
+          {t('Close')}
+        </Button>
+      }
     >
-      <ScrollArea className='max-h-[min(58vh,520px)] pr-4'>
-        <div className='space-y-4'>
-          {announcement?.content && (
-            <div>
-              <h4 className='mb-2 font-medium'>{t('Content')}</h4>
-              <RichContent breaks content={announcement.content} />
-            </div>
-          )}
-          {announcement?.extra && (
-            <div>
-              <h4 className='mb-2 font-medium'>
-                {t('Additional Information')}
-              </h4>
-              <RichContent
-                breaks
-                content={announcement.extra}
-                className='text-muted-foreground'
-              />
-            </div>
-          )}
-        </div>
-      </ScrollArea>
+      {announcement?.content && (
+        <RichContent
+          breaks
+          content={announcement.content}
+          className='text-sm leading-7 break-words'
+        />
+      )}
+      {announcement?.extra && (
+        <section className='bg-muted/50 flex flex-col gap-2 rounded-xl p-3'>
+          <h4 className='text-muted-foreground text-xs font-medium'>
+            {t('Additional Information')}
+          </h4>
+          <RichContent
+            breaks
+            content={announcement.extra}
+            className='text-muted-foreground text-sm leading-6 break-words'
+          />
+        </section>
+      )}
     </Dialog>
   )
 }

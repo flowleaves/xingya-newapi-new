@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import {
   afterAll,
@@ -29,6 +30,7 @@ import {
 } from 'vitest'
 
 import { AnnouncementPopup } from '@/components/announcement-popup'
+import { useNotifications } from '@/hooks/use-notifications'
 import { getAnnouncementKey } from '@/lib/announcement-key'
 import { useNotificationStore } from '@/stores/notification-store'
 
@@ -38,30 +40,42 @@ const { announcementsRef } = vi.hoisted(() => ({
   announcementsRef: { current: [] as Record<string, unknown>[] },
 }))
 
-vi.mock('@/hooks/use-notifications', async () => {
-  const actual = await vi.importActual<
-    typeof import('@/hooks/use-notifications')
-  >('@/hooks/use-notifications')
-  return {
-    ...actual,
-    useNotifications: () => ({
-      notice: '',
+vi.mock('@/hooks/use-status', () => ({
+  useStatus: () => ({
+    status: {
+      announcements_enabled: true,
       announcements: announcementsRef.current,
-      popupAnnouncements: announcementsRef.current,
-      loading: false,
-      unreadCount: 0,
-      unreadNoticeCount: 0,
-      unreadAnnouncementsCount: 0,
-      popoverOpen: false,
-      setPopoverOpen: vi.fn(),
-      activeTab: 'notice',
-      setActiveTab: vi.fn(),
-      openPopover: vi.fn(),
-      closePopover: vi.fn(),
-      refetchNotice: vi.fn(),
-    }),
-  }
-})
+    },
+    loading: false,
+  }),
+}))
+
+function UnreadCount() {
+  const notifications = useNotifications()
+  return (
+    <output aria-label='Unread announcements'>
+      {notifications.unreadAnnouncementsCount}
+    </output>
+  )
+}
+
+const clients: QueryClient[] = []
+
+function renderPopup() {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, staleTime: Infinity, gcTime: 0 },
+    },
+  })
+  clients.push(client)
+  client.setQueryData(['notice'], { success: true, data: '' })
+  return render(
+    <QueryClientProvider client={client}>
+      <AnnouncementPopup />
+      <UnreadCount />
+    </QueryClientProvider>
+  )
+}
 
 function announcement(overrides: Record<string, unknown> = {}) {
   return {
@@ -109,6 +123,9 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers()
+  clients.splice(0).forEach((client) => client.clear())
+  useNotificationStore.setState({ readAnnouncementKeys: [] })
+  localStorage.removeItem('notification-storage')
 })
 
 describe('announcement popup dialog', () => {
@@ -118,7 +135,7 @@ describe('announcement popup dialog', () => {
       announcement({ id: 2, publishDate: '2026-05-08T00:00:00Z' }),
     ]
 
-    render(<AnnouncementPopup />)
+    renderPopup()
 
     expect(screen.getAllByRole('dialog')).toHaveLength(1)
     // The newer of the two due announcements is the one on screen.
@@ -130,7 +147,7 @@ describe('announcement popup dialog', () => {
       announcement({ id: 1, publishDate: '2026-06-01T00:00:00Z' }),
     ]
 
-    render(<AnnouncementPopup />)
+    renderPopup()
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
@@ -140,7 +157,7 @@ describe('announcement popup dialog', () => {
     const newer = announcement({ id: 2, publishDate: '2026-05-08T00:00:00Z' })
     announcementsRef.current = [older, newer]
 
-    render(<AnnouncementPopup />)
+    renderPopup()
     // fireEvent rather than userEvent: the latter drives animation APIs that jsdom
     // does not implement (`viewport.getAnimations`).
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
@@ -148,6 +165,10 @@ describe('announcement popup dialog', () => {
     // Both keys, not only the visible one: otherwise the dialog would immediately
     // reappear for the older announcement.
     await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(screen.getByLabelText('Unread announcements')).toHaveTextContent(
+        '0'
+      )
       expect(useNotificationStore.getState().readAnnouncementKeys).toEqual(
         expect.arrayContaining([
           getAnnouncementKey(newer),
@@ -155,5 +176,48 @@ describe('announcement popup dialog', () => {
         ])
       )
     })
+  })
+
+  it('Escape dismisses the popup while leaving future announcements unread', async () => {
+    announcementsRef.current = [
+      announcement(),
+      announcement({ id: 2, publishDate: '2026-06-01T00:00:00Z' }),
+    ]
+    renderPopup()
+    fireEvent.keyDown(screen.getByRole('dialog'), {
+      key: 'Escape',
+      code: 'Escape',
+    })
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    )
+    expect(screen.getByLabelText('Unread announcements')).toHaveTextContent('1')
+  })
+
+  it('the footer closes the popup and marks due announcements read without consuming future ones', async () => {
+    const older = announcement({ id: 1, publishDate: '2026-05-01T00:00:00Z' })
+    const newer = announcement({ id: 2, publishDate: '2026-05-08T00:00:00Z' })
+    const future = announcement({ id: 3, publishDate: '2026-06-01T00:00:00Z' })
+    announcementsRef.current = [older, newer, future]
+    renderPopup()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(screen.getByLabelText('Unread announcements')).toHaveTextContent(
+        '1'
+      )
+    })
+    expect(useNotificationStore.getState().readAnnouncementKeys).toEqual(
+      expect.arrayContaining([
+        getAnnouncementKey(older),
+        getAnnouncementKey(newer),
+      ])
+    )
+    expect(useNotificationStore.getState().readAnnouncementKeys).not.toContain(
+      getAnnouncementKey(future)
+    )
   })
 })

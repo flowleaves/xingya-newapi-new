@@ -74,7 +74,7 @@ export function useNotifications() {
     lastReadNotice,
     markNoticeRead,
     markAnnouncementsRead,
-    isAnnouncementRead,
+    readAnnouncementKeys,
   } = useNotificationStore()
 
   // Extract notice content
@@ -90,7 +90,7 @@ export function useNotifications() {
     const announcementsUnread = announcements.filter(
       (item: Record<string, unknown>) => {
         const key = getAnnouncementKey(item)
-        return !isAnnouncementRead(key)
+        return !readAnnouncementKeys.includes(key)
       }
     ).length
 
@@ -99,7 +99,7 @@ export function useNotifications() {
       announcements: announcementsUnread,
       total: noticeUnread + announcementsUnread,
     }
-  }, [noticeContent, lastReadNotice, announcements, isAnnouncementRead])
+  }, [noticeContent, lastReadNotice, announcements, readAnnouncementKeys])
 
   const markAnnouncementsAsRead = () => {
     if (announcements.length > 0) {
