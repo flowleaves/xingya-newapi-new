@@ -98,7 +98,7 @@ func WeChatAuth(c *gin.Context) {
 			user.Role = common.RoleCommonUser
 			user.Status = common.UserStatusEnabled
 
-			trialReservation := model.BeginRegistrationTrial(c.ClientIP(), c.Request.UserAgent())
+			trialReservation := model.BeginRegistrationTrial(c.Request.Context(), c.ClientIP(), c.Request.UserAgent())
 			if err := user.InsertRegistration(0, trialReservation.Quota()); err != nil {
 				trialReservation.Rollback()
 				c.JSON(http.StatusOK, gin.H{

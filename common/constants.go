@@ -82,6 +82,16 @@ var RegistrationDeviceLimitEnabled = true
 // registration trial fingerprint protection.
 var RegistrationDeviceLimitWhitelist = []string{}
 
+// RegistrationSubnetBudget limits issued trials plus live reservations per network.
+// It backstops address rotation within one allocation. Exhaustion withholds the trial
+// gift while allowing account creation; shared carrier NATs may also exhaust this budget.
+var RegistrationSubnetBudget = 3
+
+// RegistrationSubnetBudgetWindowSeconds expires the total subnet counter this many
+// seconds after its last issued trial. This is an inactivity expiry, not a per-claim
+// sliding window. It is deliberately longer than the fingerprint deduplication window.
+var RegistrationSubnetBudgetWindowSeconds int64 = 30 * 24 * 60 * 60
+
 var EmailDomainRestrictionEnabled = false // 是否启用邮箱域名限制
 var EmailAliasRestrictionEnabled = false  // 是否启用邮箱别名限制
 var EmailDomainWhitelist = []string{

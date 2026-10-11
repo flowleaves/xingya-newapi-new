@@ -9,7 +9,7 @@ import (
 
 var xingyaTablesReady atomic.Bool
 
-// ensureXingyaTables creates the Xingya-owned tables on a database that does not
+// InitXingyaTables creates the Xingya-owned tables on a database that does not
 // have them yet, and does nothing at all when they already exist.
 //
 // These tables are deliberately kept out of the AutoMigrate list in migrateDB.
@@ -22,7 +22,7 @@ var xingyaTablesReady atomic.Bool
 //
 // The log_refunds precedent (ensureLogRefundTable) established this pattern for a
 // financially sensitive table; this is the same rule applied to the rest.
-func ensureXingyaTables(db *gorm.DB) error {
+func InitXingyaTables(db *gorm.DB) error {
 	if db == nil {
 		return errors.New("星芽数据表初始化失败：数据库未就绪")
 	}
@@ -60,6 +60,15 @@ func migrateXingyaTables(db *gorm.DB) error {
 	}
 
 	device := &XingyaRegistrationDevice{}
+	for _, column := range []string{"UaBucketHash"} {
+		if db.Migrator().HasColumn(device, column) {
+			continue
+		}
+		if err := db.Migrator().AddColumn(device, column); err != nil {
+			return err
+		}
+	}
+
 	for _, index := range []string{
 		"idx_xingya_invite_reward_state_auto_grant",
 		"idx_xingya_invite_reward_inviter",

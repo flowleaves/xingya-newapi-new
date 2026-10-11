@@ -273,7 +273,7 @@ func Register(c *gin.Context) {
 	}
 	affCode := user.AffCode // this code is the inviter's code, not the user's own code
 	inviterId, _ := model.GetUserIdByAffCode(affCode)
-	trialReservation := model.BeginRegistrationTrial(c.ClientIP(), c.Request.UserAgent())
+	trialReservation := model.BeginRegistrationTrial(c.Request.Context(), c.ClientIP(), c.Request.UserAgent())
 	cleanUser := model.User{
 		Username:    user.Username,
 		Password:    user.Password,

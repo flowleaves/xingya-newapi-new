@@ -399,7 +399,7 @@ func migrateDB() error {
 	//
 	// The same rule covers the rest of the Xingya-owned tables, which upstream has no
 	// reason to inspect.
-	if err := ensureXingyaTables(DB); err != nil {
+	if err := InitXingyaTables(DB); err != nil {
 		return err
 	}
 

@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 
@@ -19,9 +22,11 @@ import (
 var ErrRegistrationDeviceLimited = errors.New("registration device limit reached")
 
 // registrationDedupWindowSeconds is how long a successful registration consumes the trial
-// quota for one exact IP + user-agent fingerprint.
+// quota for one exact address together with one normalized client class.
 const registrationDedupWindowSeconds int64 = 7 * 24 * 60 * 60
 
+// registrationTrialReservationSeconds is how long a claim is held while the account is
+// being created, so two concurrent signups cannot both take the trial quota.
 const registrationTrialReservationSeconds int64 = 10 * 60
 
 // registrationDeviceRetentionSeconds bounds how long device rows are kept. The rows only
@@ -29,28 +34,37 @@ const registrationTrialReservationSeconds int64 = 10 * 60
 // registration metadata for no benefit.
 const registrationDeviceRetentionSeconds int64 = 180 * 24 * 60 * 60
 
-func unknownRegistrationIPHash() string {
-	return common.GenerateHMAC("unknown-registration-ip")
-}
-
 // XingyaRegistrationDevice records the device signals observed for one registration.
 //
-// It is the enforcement record for the same-device registration limit. Two values are
-// kept for the address because they answer different questions: IpHash matches one exact
-// client address, while IpPrefix matches an IPv6 /64 — an address range routinely rotated
-// across a single subscriber's connections. Neither is the literal address: the exact
-// address is keyed-hash only, and the stored prefix is the masked network, not the host.
+// It is the enforcement record for the registration trial limit. Two values are kept for
+// the address because they answer different questions: IpHash matches one exact client
+// address, while IpPrefix matches the network that address belongs to (IPv4 /24, IPv6 /64)
+// and exists so an administrator can see one allocation rotating through its addresses.
+// Only the exact address is matched for enforcement: refusing by network would reject an
+// ordinary user behind a shared carrier NAT after the first person there registered. The
+// network is bounded by a budget instead of by a match.
 //
-// UserAgent is truncated to the same 512 characters AuditLog uses. UaHash exists because
-// user agents are long, high-cardinality and differ only in build numbers, so comparing a
-// digest keeps the index small and the comparison exact.
+// Two digests are kept for the client string for the same reason. UaHash is the exact
+// truncated user agent, and UaBucketHash is the same agent reduced to its platform and
+// browser family. Matching the exact string alone is defeated by any build-number change
+// — which a browser upgrade causes for legitimate users too — so the normalized digest is
+// what the trial limit compares.
+//
+// UserAgent is truncated to the same 512 characters AuditLog uses. Neither digest is
+// reversible, and the truncated agent is stored for human review only.
 type XingyaRegistrationDevice struct {
-	Id            int    `json:"id" gorm:"primaryKey;autoIncrement"`
-	UserId        int    `json:"user_id" gorm:"not null;uniqueIndex:idx_xingya_registration_devices_user"`
-	IpHash        string `json:"-" gorm:"type:char(64);not null;index:idx_xingya_regdev_ip_ua_time,priority:1"`
-	IpPrefix      string `json:"-" gorm:"type:varchar(64)"`
-	UserAgent     string `json:"user_agent" gorm:"type:varchar(512)"`
-	UaHash        string `json:"-" gorm:"type:char(64);not null;index:idx_xingya_regdev_ip_ua_time,priority:2"`
+	Id        int    `json:"id" gorm:"primaryKey;autoIncrement"`
+	UserId    int    `json:"user_id" gorm:"not null;uniqueIndex:idx_xingya_registration_devices_user"`
+	IpHash    string `json:"-" gorm:"type:char(64);not null;index:idx_xingya_regdev_ip_ua_time,priority:1"`
+	IpPrefix  string `json:"-" gorm:"type:varchar(64)"`
+	UserAgent string `json:"user_agent" gorm:"type:varchar(512)"`
+	UaHash    string `json:"-" gorm:"type:char(64);not null;index:idx_xingya_regdev_ip_ua_time,priority:2"`
+	// This column is deliberately nullable. It was added after the table shipped, and both
+	// SQLite and PostgreSQL refuse to add a NOT NULL column without a default to a table
+	// that already has rows, which would have failed the deployment at startup. The write
+	// path always supplies a value; rows written before the upgrade simply do not match the
+	// normalized comparison, which is the honest answer for a row with no digest.
+	UaBucketHash  string `json:"-" gorm:"type:char(64)"`
 	SecretVersion string `json:"-" gorm:"type:varchar(16);not null"`
 	RegTime       int64  `json:"reg_time" gorm:"bigint;not null;index:idx_xingya_regdev_ip_ua_time,priority:3"`
 }
@@ -88,60 +102,245 @@ func normalizeClientIP(rawIp string) (addr netip.Addr, ok bool) {
 	return parsed.Unmap(), true
 }
 
-// registrationIPPrefix returns the masked network used for prefix comparison.
+// registrationIPPrefix returns the masked network an address belongs to: IPv4 /24, IPv6 /64.
 //
-// IPv4 has no meaningful prefix rule here: a /24 is a whole neighbourhood, and denying by
-// it would refuse every ordinary user behind a shared carrier NAT after the first one
-// registered. IPv6 is masked to /64 because that is one subscriber's allocation, so the
-// same person rotating addresses inside it still compares equal.
+// The value is never used to refuse a registration on its own. It answers two weaker
+// questions: whether a request arrives from the same allocation that recently claimed a
+// trial, and which allocation a row belongs to when an administrator reviews registrations.
+// A /24 is a whole neighbourhood and a carrier NAT can cover thousands of subscribers, so
+// matching it is only ever combined with a much wider budget than a single account.
 func registrationIPPrefix(addr netip.Addr) string {
-	if !addr.Is6() {
-		return ""
+	bits := 24
+	if addr.Is6() {
+		bits = 64
 	}
-	prefix, err := addr.Prefix(64)
+	prefix, err := addr.Prefix(bits)
 	if err != nil {
 		return ""
 	}
 	return prefix.String()
 }
 
-// GuardRegistrationDevice is retained as a no-op compatibility shim. Registration is no
-// longer refused because of a device match; callers should use BeginRegistrationTrial to
-// decide whether the new account receives the one-time registration quota.
-func GuardRegistrationDevice(tx *gorm.DB, clientIp string, userAgent string) error {
-	return nil
+// registrationSubnetKey is the digest of the network used as the subnet budget bucket.
+// An address this server cannot parse yields no bucket, and a missing bucket must never
+// consume or exhaust a budget the caller cannot be held to.
+func registrationSubnetKey(addr netip.Addr) string {
+	prefix := registrationIPPrefix(addr)
+	if prefix == "" {
+		return ""
+	}
+	return common.GenerateHMAC("registration-subnet\x00" + prefix)
 }
 
-// CheckRegistrationDevice reports whether an exact IP + user-agent fingerprint exists in
-// the recent registration history. It is diagnostic-only and must not be used to reject a
-// registration.
-func CheckRegistrationDevice(tx *gorm.DB, clientIp string, userAgent string) error {
+// registrationSubnetBudgetKey is the Redis counter that caps how many trials one network
+// may claim. It carries the secret generation for the same reason the device digests do: a
+// rotation must not silently merge two generations into one budget.
+func registrationSubnetBudgetKey(subnetKey string) string {
+	return "xingya:registration-subnet:" + registrationSecretVersion() + ":" + subnetKey
+}
+
+// unknownRegistrationIPHash stands in for the address of a registration this server could
+// not parse, so those rows are excluded from the network rollups instead of collapsing
+// every unparseable request into one apparent network.
+func unknownRegistrationIPHash() string {
+	return common.GenerateHMAC("unknown-registration-ip")
+}
+
+// Mobile platforms must precede their compatibility tokens (Android includes Linux).
+var uaMobilePlatformPattern = regexp.MustCompile(`(?i)Android|iPhone|iPad`)
+var uaPlatformPattern = regexp.MustCompile(`(?i)Windows NT|Android|iPhone|iPad|Macintosh|Mac OS X|CrOS|Linux|FreeBSD|OpenBSD|NetBSD|SunOS`)
+
+// uaBrowserPattern maps an engine token to the browser family bucket, capturing the version
+// that belongs to that token. AppleWebKit is deliberately absent: every Chrome and Edge
+// agent carries it, so it identifies nothing. Family priority, not position in the header,
+// distinguishes Edge/Opera from their earlier Chrome compatibility token.
+var uaBrowserPattern = regexp.MustCompile(`(?i)(Edg|EdgA|EdgiOS|OPR|Opera|Firefox|FxiOS|Chrome|CriOS|MSIE|Trident|Version)/([0-9]+)`)
+
+// uaBrowserCanonical maps a matched token to its canonical family name. The mapping is
+// explicit rather than using the matched text because the match is case-insensitive and a
+// client could otherwise claim a bucket of its own by changing the case of one letter.
+var uaBrowserCanonical = map[string]string{
+	"edg":     "Edge",
+	"edga":    "Edge",
+	"edgios":  "Edge",
+	"opr":     "Opera",
+	"opera":   "Opera",
+	"firefox": "Firefox",
+	"fxios":   "Firefox",
+	"chrome":  "Chrome",
+	"crios":   "Chrome",
+	"msie":    "MSIE",
+	"trident": "MSIE",
+	"version": "Safari",
+}
+
+var uaBrowserPriority = map[string]int{
+	"Edge": 0, "Opera": 1, "Firefox": 2, "Chrome": 3, "MSIE": 4, "Safari": 5,
+}
+
+// truncateRegistrationUserAgent bounds a user agent to the stored column width without
+// cutting a UTF-8 code point in half.
+func truncateRegistrationUserAgent(userAgent string) string {
+	const maxBytes = 512
+	userAgent = strings.TrimSpace(userAgent)
+	if len(userAgent) <= maxBytes {
+		return userAgent
+	}
+	end := maxBytes
+	for end > 0 && !utf8.RuneStart(userAgent[end]) {
+		end--
+	}
+	return userAgent[:end]
+}
+
+// registrationUserAgentBucket reduces a user agent to `<platform> <browser> <major>`, for
+// example `WindowsNT Chrome 141`.
+//
+// The exact agent string changes with every build of every browser, so treating it as the
+// device identity both misses the same browser after an update and lets an attacker reset
+// the identity by editing one digit. The platform and browser family are what actually
+// distinguish one class of client from another, so the comparison uses them and the major
+// version keeps the bucket from collapsing across a genuinely different engine generation.
+//
+// A client that presents no user agent, a typical scripted or command-line client, has no
+// platform or browser to distinguish and collapses into one shared fallback bucket. That is
+// intended: a missing header is not evidence of a device, but it must not become a bucket
+// that escapes comparison either.
+func registrationUserAgentBucket(userAgent string) string {
+	truncated := truncateRegistrationUserAgent(userAgent)
+	platform := "unknown"
+	// The platform token is matched case-insensitively, so its case is normalized too:
+	// otherwise changing one letter's case would mint a bucket of the client's own.
+	match := uaMobilePlatformPattern.FindString(truncated)
+	if match == "" {
+		match = uaPlatformPattern.FindString(truncated)
+	}
+	if match != "" {
+		platform = strings.ReplaceAll(strings.ToLower(match), " ", "")
+	}
+	browser := "other"
+	major := "0"
+	// The digits have to be read from the browser token itself: agents carry other version
+	// strings earlier in the header (AppleWebKit/537.36 always precedes Chrome/141), so the
+	// first number in the string is never the browser version.
+	priority := len(uaBrowserPriority)
+	for _, groups := range uaBrowserPattern.FindAllStringSubmatch(truncated, -1) {
+		family := uaBrowserCanonical[strings.ToLower(groups[1])]
+		if uaBrowserPriority[family] >= priority {
+			continue
+		}
+		browser, priority = family, uaBrowserPriority[family]
+		if parsed, err := strconv.Atoi(groups[2]); err == nil {
+			major = strconv.Itoa(parsed)
+		}
+	}
+	return platform + " " + browser + " " + major
+}
+
+// registrationUserAgentBucketHash is the indexed form of the bucket.
+func registrationUserAgentBucketHash(userAgent string) string {
+	return common.GenerateHMAC(registrationUserAgentBucket(userAgent))
+}
+
+// registrationMatch answers whether a previous registration should consume this one's trial
+// quota, and why.
+type registrationMatch struct {
+	// ExactAddress is true when a recent registration was written for this precise client
+	// address and this client class.
+	ExactAddress bool
+	// WithinBudget is true while the caller's allocation has claimed fewer than the allowed
+	// number of trials in the rolling window.
+	WithinBudget bool
+}
+
+// ConsumesTrialQuota reports whether this registration repeats a client the trial quota was
+// already spent on.
+//
+// The rule is deliberately narrow. A repeat must arrive from the exact same address: two
+// different households behind one carrier NAT are different people, and refusing the second
+// one is a false positive that costs a real signup. Within one address, a client is treated
+// as the same when it presents the same platform and browser family, which is what survives
+// a browser update.
+//
+// The network budget is a separate condition, not a refinement of the address rule. It is
+// the backstop for the one case the address can never catch — a client rotating through the
+// addresses of one allocation — and there the request has no history at all, so requiring a
+// matching row would disable the backstop exactly when it is needed. It is only reached once
+// the allocation has spent its allowance, so a shared network keeps its first honest signups.
+func (match registrationMatch) ConsumesTrialQuota() bool {
+	return match.ExactAddress || !match.WithinBudget
+}
+
+// findRecentRegistrationMatch reports whether the given client repeats a recent
+// registration, and whether its network still has trial budget left.
+//
+// The budget comes from its own counter rather than from the registration rows: a rotation
+// is exactly the case where the address has no history at all, so the rows cannot carry it.
+func findRecentRegistrationMatch(tx *gorm.DB, clientIp string, userAgent string, subnetKey string) (registrationMatch, error) {
+	match := registrationMatch{WithinBudget: true}
 	endpoint := tx
 	if endpoint == nil {
 		endpoint = DB
 	}
 	addr, ok := normalizeClientIP(clientIp)
-	if !ok {
-		// An address this server cannot parse cannot be enforced against. Refusing would
-		// block registrations for an infrastructure reason, so the check passes.
+	if !ok || endpoint == nil {
+		// An address this server cannot parse cannot be enforced against, and refusing
+		// would block registrations for an infrastructure reason.
+		return match, nil
+	}
+
+	var repeats int64
+	err := endpoint.Model(&XingyaRegistrationDevice{}).
+		Where("reg_time >= ? AND secret_version = ? AND ua_bucket_hash = ? AND ip_hash = ?",
+			common.GetTimestamp()-registrationDedupWindowSeconds,
+			registrationSecretVersion(),
+			registrationUserAgentBucketHash(userAgent),
+			common.GenerateHMAC(addr.String())).
+		Limit(1).Count(&repeats).Error
+	if err != nil {
+		return match, err
+	}
+	match.ExactAddress = repeats > 0
+	match.WithinBudget = registrationSubnetWithinBudget(subnetKey)
+	return match, nil
+}
+
+// registrationSubnetWithinBudget reports whether the network may still claim a trial.
+//
+// Redis is an accelerator and a failure is deliberately fail-open: a cache outage must not
+// turn into a registration outage, which is the same rule the claim itself follows.
+// A budget of zero or less disables the backstop.
+func registrationSubnetWithinBudget(subnetKey string) bool {
+	if common.RegistrationSubnetBudget <= 0 {
+		return true
+	}
+	if subnetKey == "" || !common.RedisEnabled || common.RDB == nil {
+		return true
+	}
+	value, err := common.RDB.Get(context.Background(), registrationSubnetBudgetKey(subnetKey)).Int()
+	if err != nil {
+		// A missing key and an outage are indistinguishable here, and both mean "this
+		// network has not been recorded as exhausted".
+		return true
+	}
+	return value < common.RegistrationSubnetBudget
+}
+
+// CheckRegistrationDevice reports whether the client repeats a recent registration. It is
+// diagnostic-only and must not be used to reject a registration.
+func CheckRegistrationDevice(tx *gorm.DB, clientIp string, userAgent string) error {
+	if !common.RegistrationDeviceLimitEnabled {
 		return nil
 	}
-
-	truncatedUa := truncateRegistrationUserAgent(userAgent)
-	ipHash := common.GenerateHMAC(addr.String())
-	uaHash := common.GenerateHMAC(truncatedUa)
-	since := common.GetTimestamp() - registrationDedupWindowSeconds
-	secretVersion := registrationSecretVersion()
-
-	query := endpoint.Model(&XingyaRegistrationDevice{}).
-		Where("reg_time >= ? AND secret_version = ?", since, secretVersion).
-		Where("ip_hash = ? AND ua_hash = ?", ipHash, uaHash)
-
-	var existing int64
-	if err := query.Limit(1).Count(&existing).Error; err != nil {
+	addr, ok := normalizeClientIP(clientIp)
+	if !ok {
+		return nil
+	}
+	match, err := findRecentRegistrationMatch(tx, clientIp, userAgent, registrationSubnetKey(addr))
+	if err != nil {
 		return err
 	}
-	if existing > 0 {
+	if match.ConsumesTrialQuota() {
 		return ErrRegistrationDeviceLimited
 	}
 	return nil
@@ -149,50 +348,97 @@ func CheckRegistrationDevice(tx *gorm.DB, clientIp string, userAgent string) err
 
 // RegistrationTrialReservation represents the short Redis reservation made while an
 // account is being created. A reservation that reaches Commit becomes the seven-day
-// fingerprint marker; a failed registration releases it so a normal retry keeps its
-// trial quota.
+// fingerprint marker and charges the network budget; a failed registration releases the
+// fingerprint so a normal retry keeps its trial quota.
 type RegistrationTrialReservation struct {
-	key       string
-	token     string
-	quota     int
-	committed bool
+	key          string
+	token        string
+	budgetKey    string
+	budgetWindow int64
+	quota        int
+	committed    bool
 }
 
-// BeginRegistrationTrial atomically claims the registration trial for an exact IP + UA
-// fingerprint. Redis is an accelerator and a failure is deliberately fail-open so a cache
-// outage cannot turn into a registration outage.
-func BeginRegistrationTrial(clientIp string, userAgent string) *RegistrationTrialReservation {
+// BeginRegistrationTrial decides whether a signup receives the one-time registration quota.
+//
+// Two independent signals can withhold it, and either is enough: the client repeats an
+// address and client class the quota was already spent on, or its network has already
+// claimed its allowance of trials. The account is created either way; only the gift is
+// withheld, because refusing the signup itself would block a real user for a signal that
+// is only ever circumstantial.
+//
+// Redis serves the same decision as the database rows, so this stays one indexed lookup on
+// the common path. It is an accelerator, and every Redis failure is deliberately fail-open
+// so that a cache outage cannot become a registration outage.
+func BeginRegistrationTrial(ctx context.Context, clientIp string, userAgent string) *RegistrationTrialReservation {
 	reservation := &RegistrationTrialReservation{quota: common.QuotaForNewUser}
-	if !common.RegistrationDeviceLimitEnabled || common.IsRegistrationDeviceWhitelisted(clientIp) {
+	if reservation.quota <= 0 || !common.RegistrationDeviceLimitEnabled || common.IsRegistrationDeviceWhitelisted(clientIp) {
 		return reservation
 	}
 
 	addr, ok := normalizeClientIP(clientIp)
-	if !ok || !common.RedisEnabled || common.RDB == nil {
+	if !ok {
+		return reservation
+	}
+	subnetKey := registrationSubnetKey(addr)
+
+	match, err := findRecentRegistrationMatch(nil, clientIp, userAgent, subnetKey)
+	if err != nil {
+		common.SysError("failed to read registration history: " + err.Error())
+	} else if match.ExactAddress {
+		reservation.quota = 0
 		return reservation
 	}
 
-	truncatedUa := truncateRegistrationUserAgent(userAgent)
-	fingerprint := common.GenerateHMAC(addr.String() + "\x00" + truncatedUa)
-	key := "xingya:registration-trial:" + registrationSecretVersion() + ":" + fingerprint
+	if !common.RedisEnabled || common.RDB == nil {
+		return reservation
+	}
+
 	token, err := common.GenerateRandomCharsKey(32)
 	if err != nil {
 		common.SysError("failed to generate registration trial reservation token: " + err.Error())
 		return reservation
 	}
-
-	claimed, err := common.RDB.SetNX(context.Background(), key, token,
-		time.Duration(registrationTrialReservationSeconds)*time.Second).Result()
+	// The claim key is the claimed client, not the masked network, so that two different
+	// people who happen to share a network do not lock each other out of the bonus while
+	// one of them is still signing up.
+	claimKey := "xingya:registration-trial:" + registrationSecretVersion() + ":" +
+		common.GenerateHMAC(addr.String()+"\x00"+registrationUserAgentBucket(userAgent))
+	budgetKey := registrationSubnetBudgetKey(subnetKey)
+	// Reserve both the client and one subnet slot in the same atomic operation. Live
+	// leases count against the budget, while failed or expired signups release capacity.
+	const reserveScript = `
+if redis.call('exists', KEYS[1]) == 1 then return 0 end
+if tonumber(ARGV[3]) > 0 then
+  local now = tonumber(redis.call('time')[1])
+  redis.call('zremrangebyscore', KEYS[3], '-inf', now)
+  local claimed = tonumber(redis.call('get', KEYS[2]) or '0')
+  if claimed + redis.call('zcard', KEYS[3]) >= tonumber(ARGV[3]) then return 0 end
+  redis.call('zadd', KEYS[3], now + tonumber(ARGV[2]), ARGV[1])
+  redis.call('expire', KEYS[3], ARGV[2])
+end
+redis.call('set', KEYS[1], ARGV[1], 'EX', ARGV[2])
+return 1`
+	// Account insertion is not cancelled with the HTTP context. Use a bounded server
+	// context too, so a client disconnect cannot turn the gift check into fail-open.
+	redisCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	claimed, err := common.RDB.Eval(redisCtx, reserveScript, []string{claimKey, budgetKey, budgetKey + ":pending"},
+		token, registrationTrialReservationSeconds, common.RegistrationSubnetBudget).Int()
 	if err != nil {
 		common.SysError("failed to reserve registration trial in Redis: " + err.Error())
 		return reservation
 	}
-	if !claimed {
+	if claimed == 0 {
 		reservation.quota = 0
 		return reservation
 	}
-	reservation.key = key
+	reservation.key = claimKey
 	reservation.token = token
+	if common.RegistrationSubnetBudget > 0 {
+		reservation.budgetKey = budgetKey
+		reservation.budgetWindow = common.RegistrationSubnetBudgetWindowSeconds
+	}
 	return reservation
 }
 
@@ -204,14 +450,28 @@ func (reservation *RegistrationTrialReservation) Quota() int {
 	return reservation.quota
 }
 
-// Commit promotes a successful registration reservation to the full deduplication TTL.
+// Commit promotes a successful registration reservation to the full deduplication TTL and
+// converts its reserved subnet slot to one issued trial. A token receipt prevents repeated
+// commits from charging twice, including retries after the client lease expired.
 func (reservation *RegistrationTrialReservation) Commit() {
-	if reservation == nil || reservation.key == "" || reservation.committed {
+	if reservation == nil || reservation.key == "" || reservation.quota <= 0 || reservation.committed || common.RDB == nil {
 		return
 	}
-	const script = `if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("expire", KEYS[1], ARGV[2]) else return 0 end`
-	if err := common.RDB.Eval(context.Background(), script, []string{reservation.key},
-		reservation.token, registrationDedupWindowSeconds).Err(); err != nil {
+	const script = `
+if tonumber(ARGV[3]) > 0 then
+  if redis.call('set', KEYS[4], '1', 'EX', ARGV[3], 'NX') then
+    redis.call('incr', KEYS[2])
+    redis.call('expire', KEYS[2], ARGV[3])
+  end
+  redis.call('zrem', KEYS[3], ARGV[1])
+end
+if redis.call('get', KEYS[1]) == ARGV[1] then
+  redis.call('set', KEYS[1], 'committed:' .. ARGV[1], 'EX', ARGV[2])
+end
+return 1`
+	if err := common.RDB.Eval(context.Background(), script, []string{reservation.key, reservation.budgetKey,
+		reservation.budgetKey + ":pending", reservation.budgetKey + ":committed:" + reservation.token},
+		reservation.token, registrationDedupWindowSeconds, reservation.budgetWindow).Err(); err != nil {
 		common.SysError("failed to commit registration trial reservation: " + err.Error())
 		return
 	}
@@ -224,10 +484,17 @@ func (reservation *RegistrationTrialReservation) Rollback() {
 	if reservation == nil || reservation.key == "" || reservation.committed || common.RDB == nil {
 		return
 	}
-	const script = `if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end`
-	if err := common.RDB.Eval(context.Background(), script, []string{reservation.key}, reservation.token).Err(); err != nil {
+	const script = `
+if redis.call('get', KEYS[1]) == ARGV[1] then redis.call('del', KEYS[1]) end
+if tonumber(ARGV[2]) > 0 and redis.call('exists', KEYS[3]) == 0 then redis.call('zrem', KEYS[2], ARGV[1]) end
+return 1`
+	if err := common.RDB.Eval(context.Background(), script, []string{reservation.key,
+		reservation.budgetKey + ":pending", reservation.budgetKey + ":committed:" + reservation.token},
+		reservation.token, reservation.budgetWindow).Err(); err != nil {
 		common.SysError("failed to release registration trial reservation: " + err.Error())
+		return
 	}
+	reservation.committed = true
 }
 
 // RecordRegistrationDevice stores the device signals for a registration that was accepted.
@@ -258,6 +525,7 @@ func RecordRegistrationDevice(tx *gorm.DB, userId int, clientIp string, userAgen
 		IpPrefix:      ipPrefix,
 		UserAgent:     truncatedUa,
 		UaHash:        common.GenerateHMAC(truncatedUa),
+		UaBucketHash:  registrationUserAgentBucketHash(truncatedUa),
 		SecretVersion: registrationSecretVersion(),
 		RegTime:       common.GetTimestamp(),
 	}
@@ -391,19 +659,4 @@ func PruneRegistrationDevices() (int64, error) {
 	result := DB.Where("reg_time < ?", common.GetTimestamp()-registrationDeviceRetentionSeconds).
 		Delete(&XingyaRegistrationDevice{})
 	return result.RowsAffected, result.Error
-}
-
-// truncateRegistrationUserAgent bounds a normalized user agent to the stored column width
-// without cutting a UTF-8 code point in half.
-func truncateRegistrationUserAgent(userAgent string) string {
-	const maxBytes = 512
-	userAgent = strings.TrimSpace(userAgent)
-	if len(userAgent) <= maxBytes {
-		return userAgent
-	}
-	truncated := userAgent[:maxBytes]
-	for len(truncated) > 0 && (truncated[len(truncated)-1]&0xc0) == 0x80 {
-		truncated = truncated[:len(truncated)-1]
-	}
-	return truncated
 }

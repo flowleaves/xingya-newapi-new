@@ -1,9 +1,11 @@
 package model
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -12,7 +14,7 @@ import (
 func setupInviteRewardTestState(t *testing.T, inviterQuota int) {
 	t.Helper()
 	truncateTables(t)
-	require.NoError(t, ensureXingyaTables(DB))
+	require.NoError(t, InitXingyaTables(DB))
 	require.NoError(t, DB.Exec("DELETE FROM xingya_invite_reward_pending").Error)
 	oldInviteeQuota := common.QuotaForInvitee
 	oldInviterQuota := common.QuotaForInviter
@@ -80,6 +82,172 @@ func TestCreateInviteRewardPendingOnlyStoresInviterReward(t *testing.T) {
 	assert.Zero(t, reward.QualifyingCalls)
 	assert.Equal(t, 100000, getUserQuotaFromDB(t, inviter.Id))
 	assert.Equal(t, 100000, getUserQuotaFromDB(t, invitee.Id))
+}
+
+func TestRaisedInviteSpendGateCanStillBeReached(t *testing.T) {
+	setupInviteRewardTestState(t, 8000)
+	setting := operation_setting.GetInviteRewardSetting()
+	previous := *setting
+	setting.RequiredConsumeUSD = 1
+	t.Cleanup(func() { *setting = previous })
+	inviter := createReserveTestUser(t, 100000)
+	invitee := createReserveTestUser(t, 1000000)
+	reward := registerInviteRewardFixture(t, inviter.Id, invitee.Id)
+	gate := RequiredConsumeQuota()
+	for range InviteRewardRequiredCalls {
+		RecordSuccessfulBillableCall(invitee.Id, gate/InviteRewardRequiredCalls)
+	}
+	require.Equal(t, InviteRewardStateEligible, getInviteRewardFromDB(t, reward.Id).State)
+	setting.RequiredConsumeUSD = 2
+	for range InviteRewardRequiredCalls {
+		RecordSuccessfulBillableCall(invitee.Id, gate/InviteRewardRequiredCalls)
+	}
+	assert.Equal(t, gate*2, getInviteRewardFromDB(t, reward.Id).QualifyingQuota)
+	granted, _, err := ClaimInviteReward(inviter.Id, reward.Id)
+	require.NoError(t, err)
+	assert.True(t, granted)
+}
+
+func TestLegacyEligibleInviteWithZeroSpendCanRecover(t *testing.T) {
+	setupInviteRewardTestState(t, 8000)
+	inviter := createReserveTestUser(t, 100000)
+	invitee := createReserveTestUser(t, 1000000)
+	reward := registerInviteRewardFixture(t, inviter.Id, invitee.Id)
+	require.NoError(t, DB.Model(reward).Updates(map[string]any{"state": InviteRewardStateEligible, "qualifying_calls": 10, "qualifying_quota": 0}).Error)
+	RecordSuccessfulBillableCall(invitee.Id, RequiredConsumeQuota())
+	granted, _, err := ClaimInviteReward(inviter.Id, reward.Id)
+	require.NoError(t, err)
+	assert.True(t, granted)
+}
+
+func TestAutoGrantSkipsLegacyRowsBelowCurrentSpendGate(t *testing.T) {
+	setupInviteRewardTestState(t, 8000)
+	inviter := createReserveTestUser(t, 100000)
+	for i := range inviteRewardBatchLimit {
+		require.NoError(t, DB.Create(&XingyaInviteRewardPending{InviterId: inviter.Id, InviteeId: i + 10000,
+			State: InviteRewardStateEligible, QualifyingCalls: 10, QualifyingQuota: 0, AutoGrantAt: 1}).Error)
+	}
+	invitee := createReserveTestUser(t, 1000000)
+	reward := registerInviteRewardFixture(t, inviter.Id, invitee.Id)
+	satisfyInviteReward(t, invitee.Id)
+	require.NoError(t, DB.Model(reward).Update("auto_grant_at", 1).Error)
+	granted, _, err := SettleInviteReward(common.GetTimestamp())
+	require.NoError(t, err)
+	assert.Equal(t, 1, granted)
+	assert.Equal(t, InviteRewardStateGranted, getInviteRewardFromDB(t, reward.Id).State)
+}
+
+func TestRefundExcludesLegacyCallFromUnpaidInviteProgressOnce(t *testing.T) {
+	for _, source := range []string{"wallet", "subscription"} {
+		t.Run(source, func(t *testing.T) {
+			setupInviteRewardTestState(t, 8000)
+			prepareRefundFixture(t)
+			inviter := createReserveTestUser(t, 100000)
+			invitee := createReserveTestUser(t, 1000000)
+			reward := registerInviteRewardFixture(t, inviter.Id, invitee.Id)
+			perCall := RequiredConsumeQuota() / InviteRewardRequiredCalls
+			for range InviteRewardRequiredCalls {
+				RecordSuccessfulBillableCall(invitee.Id, perCall)
+			}
+			log := newConsumeLog(t, invitee.Id, perCall, "legacy-refunded-call")
+			refund := func() error {
+				return DoSelfRefundWallet(invitee.Id, log.Id, perCall, perCall/2, "empty_response", log.RequestId, noLimits)
+			}
+			if source == "subscription" {
+				sub := newActiveSubscription(t, invitee.Id, 1000000, 500000)
+				refund = func() error {
+					return DoSelfRefundSubscription(invitee.Id, log.Id, sub.Id, perCall, perCall/2, "empty_response", log.RequestId, noLimits)
+				}
+			}
+			require.NoError(t, refund())
+			stored := getInviteRewardFromDB(t, reward.Id)
+			assert.Equal(t, InviteRewardStatePending, stored.State)
+			assert.Equal(t, 9, stored.QualifyingCalls)
+			assert.Equal(t, perCall*9, stored.QualifyingQuota, "the whole refunded call is excluded, not just the credited half")
+			assert.Zero(t, stored.AutoGrantAt)
+			require.Error(t, refund())
+			assert.Equal(t, stored, getInviteRewardFromDB(t, reward.Id), "refund replay must not remove progress twice")
+			_, _, err := ClaimInviteReward(inviter.Id, reward.Id)
+			assert.ErrorIs(t, err, ErrInviteRewardNotEligible)
+		})
+	}
+}
+
+func TestRefundDoesNotRemoveExcludedCallsOrPaidRewards(t *testing.T) {
+	setupInviteRewardTestState(t, 8000)
+	prepareRefundFixture(t)
+	inviter := createReserveTestUser(t, 100000)
+	invitee := createReserveTestUser(t, 1000000)
+	reward := registerInviteRewardFixture(t, inviter.Id, invitee.Id)
+	satisfyInviteReward(t, invitee.Id)
+	before := getInviteRewardFromDB(t, reward.Id)
+	log := newConsumeLog(t, invitee.Id, 10000, "excluded-refund")
+	require.NoError(t, LOG_DB.Model(log).Update("other", `{"audit_info":{"invite_qualifying":false}}`).Error)
+	require.NoError(t, DoSelfRefundWallet(invitee.Id, log.Id, 10000, 5000, "empty_response", log.RequestId, noLimits))
+	assert.Equal(t, before, getInviteRewardFromDB(t, reward.Id))
+	granted, _, err := ClaimInviteReward(inviter.Id, reward.Id)
+	require.NoError(t, err)
+	assert.True(t, granted)
+	paid := getInviteRewardFromDB(t, reward.Id)
+	log = newConsumeLog(t, invitee.Id, 10000, "paid-history-refund")
+	require.NoError(t, DoSelfRefundWallet(invitee.Id, log.Id, 10000, 5000, "empty_response", log.RequestId, noLimits))
+	assert.Equal(t, paid, getInviteRewardFromDB(t, reward.Id))
+	assert.Equal(t, 108000, getUserQuotaFromDB(t, inviter.Id))
+}
+
+func TestFailedRefundRollsBackInviteProgress(t *testing.T) {
+	setupInviteRewardTestState(t, 8000)
+	prepareRefundFixture(t)
+	inviter := createReserveTestUser(t, 100000)
+	invitee := createReserveTestUser(t, common.MaxWalletQuota-10)
+	reward := registerInviteRewardFixture(t, inviter.Id, invitee.Id)
+	satisfyInviteReward(t, invitee.Id)
+	before := getInviteRewardFromDB(t, reward.Id)
+	log := newConsumeLog(t, invitee.Id, 10000, fmt.Sprintf("ceiling-refund-%d", invitee.Id))
+	require.Error(t, DoSelfRefundWallet(invitee.Id, log.Id, 10000, 5000, "empty_response", log.RequestId, noLimits))
+	assert.Equal(t, before, getInviteRewardFromDB(t, reward.Id))
+	var count int64
+	require.NoError(t, DB.Model(&LogRefund{}).Count(&count).Error)
+	assert.Zero(t, count)
+}
+
+func TestConcurrentInviteClaimAndRefundKeepAccountingConsistent(t *testing.T) {
+	setupInviteRewardTestState(t, 8000)
+	prepareRefundFixture(t)
+	inviter := createReserveTestUser(t, 100000)
+	invitee := createReserveTestUser(t, 1000000)
+	reward := registerInviteRewardFixture(t, inviter.Id, invitee.Id)
+	perCall := RequiredConsumeQuota() / InviteRewardRequiredCalls
+	for range InviteRewardRequiredCalls {
+		RecordSuccessfulBillableCall(invitee.Id, perCall)
+	}
+	log := newConsumeLog(t, invitee.Id, perCall, "claim-refund-race")
+	start := make(chan struct{})
+	claimResult := make(chan error, 1)
+	refundResult := make(chan error, 1)
+	go func() {
+		<-start
+		_, _, err := ClaimInviteReward(inviter.Id, reward.Id)
+		claimResult <- err
+	}()
+	go func() {
+		<-start
+		refundResult <- DoSelfRefundWallet(invitee.Id, log.Id, perCall, perCall/2, "empty_response", log.RequestId, noLimits)
+	}()
+	close(start)
+	require.NoError(t, <-refundResult)
+	claimErr := <-claimResult
+	stored := getInviteRewardFromDB(t, reward.Id)
+	if claimErr == nil {
+		assert.Equal(t, InviteRewardStateGranted, stored.State)
+		assert.Equal(t, 108000, getUserQuotaFromDB(t, inviter.Id), "a reward credited first is retained")
+	} else {
+		require.ErrorIs(t, claimErr, ErrInviteRewardNotEligible)
+		assert.Equal(t, InviteRewardStatePending, stored.State)
+		assert.Equal(t, 9, stored.QualifyingCalls)
+		assert.Equal(t, 100000, getUserQuotaFromDB(t, inviter.Id), "a refund committed first blocks payout")
+	}
+	assert.Equal(t, 1000000+perCall/2, getUserQuotaFromDB(t, invitee.Id))
 }
 
 func TestSuccessfulBillableCallsPromoteAtTen(t *testing.T) {

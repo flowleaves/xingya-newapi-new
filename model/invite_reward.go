@@ -110,7 +110,7 @@ func RequiredConsumeQuota() int {
 	return operation_setting.GetInviteRewardSetting().RequiredConsumeQuota(common.QuotaPerUnit)
 }
 
-// RecordSuccessfulBillableCall advances only an existing pending reward, accumulating
+// RecordSuccessfulBillableCall advances an existing unsettled reward, accumulating
 // both the qualifying call count and the qualifying spend.
 //
 // This is one conditional UPDATE. PostgreSQL serializes concurrent writes to the same
@@ -121,11 +121,13 @@ func RequiredConsumeQuota() int {
 // Both published conditions must hold at once: the invited account has to complete the
 // required number of successful billable calls *and* spend the configured amount. The
 // spend gate is read once per call so an administrator changing it takes effect without
-// a restart; already-promoted rows keep their eligibility because the state check below
-// only matches pending rows.
-func RecordSuccessfulBillableCall(userId int, quotaConsumed int) {
+// a restart. Eligible rows continue accruing so a raised gate or a legacy zero spend
+// column can be reached. Granted/cancelled rows never change. The result records whether
+// this call actually contributed, allowing refunds to distinguish new exclusions from
+// calls written before that metadata existed.
+func RecordSuccessfulBillableCall(userId int, quotaConsumed int) bool {
 	if userId <= 0 || DB == nil || !xingyaTablesReady.Load() {
-		return
+		return false
 	}
 	quotaDelta := quotaConsumed
 	if quotaDelta < 0 {
@@ -134,22 +136,24 @@ func RecordSuccessfulBillableCall(userId int, quotaConsumed int) {
 	now := common.GetTimestamp()
 	autoGrantAt := inviteRewardAutoGrantAt(now)
 	spendGate := inviteRewardSpendGate()
-	err := DB.Exec(`
+	result := DB.Exec(`
 UPDATE xingya_invite_reward_pending
-SET state = CASE WHEN qualifying_calls + 1 >= ? AND qualifying_quota + ? >= ? THEN ? ELSE state END,
-    eligible_at = CASE WHEN qualifying_calls + 1 >= ? AND qualifying_quota + ? >= ? AND eligible_at = 0 THEN ? ELSE eligible_at END,
-    auto_grant_at = CASE WHEN qualifying_calls + 1 >= ? AND qualifying_quota + ? >= ? AND auto_grant_at = 0 THEN ? ELSE auto_grant_at END,
+SET eligible_at = CASE WHEN qualifying_calls + 1 >= ? AND qualifying_quota + ? >= ? THEN CASE WHEN eligible_at = 0 THEN ? ELSE eligible_at END ELSE 0 END,
+    auto_grant_at = CASE WHEN qualifying_calls + 1 >= ? AND qualifying_quota + ? >= ? THEN CASE WHEN auto_grant_at = 0 THEN ? ELSE auto_grant_at END ELSE 0 END,
+    state = CASE WHEN qualifying_calls + 1 >= ? AND qualifying_quota + ? >= ? THEN ? ELSE ? END,
     qualifying_calls = qualifying_calls + 1,
     qualifying_quota = qualifying_quota + ?
-WHERE invitee_id = ? AND state = ?
-`, InviteRewardRequiredCalls, quotaDelta, spendGate, InviteRewardStateEligible,
-		InviteRewardRequiredCalls, quotaDelta, spendGate, now,
+WHERE invitee_id = ? AND state IN (?, ?)
+`, InviteRewardRequiredCalls, quotaDelta, spendGate, now,
 		InviteRewardRequiredCalls, quotaDelta, spendGate, autoGrantAt,
+		InviteRewardRequiredCalls, quotaDelta, spendGate, InviteRewardStateEligible, InviteRewardStatePending,
 		quotaDelta,
-		userId, InviteRewardStatePending).Error
-	if err != nil {
-		common.SysError(fmt.Sprintf("failed to record successful invite call for user %d: %v", userId, err))
+		userId, InviteRewardStatePending, InviteRewardStateEligible)
+	if result.Error != nil {
+		common.SysError(fmt.Sprintf("failed to record successful invite call for user %d: %v", userId, result.Error))
+		return false
 	}
+	return result.RowsAffected > 0
 }
 
 // HasPendingInviteReward reports whether the scheduled midnight pass has work.
@@ -159,7 +163,8 @@ func HasPendingInviteReward() bool {
 	}
 	var count int64
 	err := DB.Model(&XingyaInviteRewardPending{}).
-		Where("state = ? AND auto_grant_at > 0 AND auto_grant_at <= ?", InviteRewardStateEligible, common.GetTimestamp()).
+		Where("state = ? AND auto_grant_at > 0 AND auto_grant_at <= ? AND qualifying_calls >= ? AND qualifying_quota >= ?",
+			InviteRewardStateEligible, common.GetTimestamp(), InviteRewardRequiredCalls, inviteRewardSpendGate()).
 		Limit(1).Count(&count).Error
 	if err != nil {
 		common.SysError("failed to check pending invite rewards: " + err.Error())
@@ -172,7 +177,10 @@ func HasPendingInviteReward() bool {
 // arrived. ClaimInviteReward uses the same transaction with a different grant method.
 func SettleInviteReward(now int64) (granted int, cancelled int, err error) {
 	rewards := make([]*XingyaInviteRewardPending, 0)
-	err = DB.Where("state = ? AND auto_grant_at > 0 AND auto_grant_at <= ?", InviteRewardStateEligible, now).
+	// Exclude rows that need more spend before taking the bounded batch, so legacy
+	// eligible rows and a raised gate cannot starve later payable rewards.
+	err = DB.Where("state = ? AND auto_grant_at > 0 AND auto_grant_at <= ? AND qualifying_calls >= ? AND qualifying_quota >= ?",
+		InviteRewardStateEligible, now, InviteRewardRequiredCalls, inviteRewardSpendGate()).
 		Order("id asc").Limit(inviteRewardBatchLimit).Find(&rewards).Error
 	if err != nil {
 		return 0, 0, err
@@ -320,6 +328,54 @@ func closeInviteRewardTx(tx *gorm.DB, rewardId int, state string, note string) e
 			"settled_at":     common.GetTimestamp(),
 			"cancelled_note": note,
 		}).Error
+}
+
+// revokeRefundedInviteCallTx excludes the entire refunded call from an unpaid reward,
+// even for a partial refund. New text logs explicitly say whether they counted; missing
+// metadata follows the legacy counting path. The refund's unique log_id and this update
+// share one transaction, so a replay cannot remove progress twice. Lock the reward before
+// any user row, matching the grant transaction's lock order. Paid rewards are preserved.
+func revokeRefundedInviteCallTx(tx *gorm.DB, log *Log, quotaConsumed int) error {
+	if !xingyaTablesReady.Load() || quotaConsumed <= 0 {
+		return nil
+	}
+	var other map[string]any
+	if log.Other != "" {
+		if err := common.UnmarshalJsonStr(log.Other, &other); err != nil {
+			// Historical metadata may be an array/scalar. It has no new counting
+			// marker, so retain the legacy treatment without rewriting the source log.
+			other = nil
+		}
+	}
+	if audit, ok := other[logOtherAuditInfoKey].(map[string]any); ok {
+		if counted, ok := audit["invite_qualifying"].(bool); ok && !counted {
+			return nil
+		}
+	}
+	var reward XingyaInviteRewardPending
+	err := lockForUpdate(tx).Where("invitee_id = ? AND state IN ?", log.UserId,
+		[]string{InviteRewardStatePending, InviteRewardStateEligible}).First(&reward).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if log.CreatedAt < reward.CreatedAt {
+		return nil
+	}
+	qualifyingCalls := max(0, reward.QualifyingCalls-1)
+	qualifyingQuota := max(0, reward.QualifyingQuota-quotaConsumed)
+	updates := map[string]any{
+		"qualifying_calls": qualifyingCalls,
+		"qualifying_quota": qualifyingQuota,
+	}
+	if qualifyingCalls < InviteRewardRequiredCalls || qualifyingQuota < inviteRewardSpendGate() {
+		updates["state"] = InviteRewardStatePending
+		updates["eligible_at"] = 0
+		updates["auto_grant_at"] = 0
+	}
+	return tx.Model(&reward).Updates(updates).Error
 }
 
 // CancelInviteRewardsForDeletedInviter closes every unsettled reward as part of the

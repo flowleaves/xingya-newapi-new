@@ -20,11 +20,13 @@ var noLimits = RefundLimits{}
 func prepareRefundFixture(t *testing.T) {
 	t.Helper()
 	require.NoError(t, DB.AutoMigrate(&LogRefund{}))
-	for _, table := range []string{"log_refunds", "logs", "users", "user_subscriptions"} {
+	require.NoError(t, DB.AutoMigrate(&SubscriptionPreConsumeRecord{}))
+	require.NoError(t, InitXingyaTables(DB))
+	for _, table := range []string{"log_refunds", "logs", "users", "user_subscriptions", "subscription_pre_consume_records"} {
 		require.NoError(t, DB.Exec("DELETE FROM "+table).Error)
 	}
 	t.Cleanup(func() {
-		for _, table := range []string{"log_refunds", "logs", "users", "user_subscriptions"} {
+		for _, table := range []string{"log_refunds", "logs", "users", "user_subscriptions", "subscription_pre_consume_records"} {
 			DB.Exec("DELETE FROM " + table)
 		}
 	})
@@ -284,6 +286,50 @@ func TestDoSelfRefundSubscriptionClampsAmountUsedAtZero(t *testing.T) {
 	var afterSub UserSubscription
 	require.NoError(t, DB.First(&afterSub, sub.Id).Error)
 	require.Equal(t, int64(0), afterSub.AmountUsed, "amount_used must be clamped at zero, never negative")
+}
+
+func TestDoSelfRefundSubscriptionChecksOriginalConsumptionCycle(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		logAge, preconsumeAge int64
+		useTime               int
+		wantError             bool
+	}{
+		{"legacy previous cycle", 3600, 0, 0, true},
+		{"legacy current cycle", 10, 0, 5, false},
+		{"legacy long request started before reset", 10, 0, 3600, true},
+		{"long request started before reset", 10, 3600, 0, true},
+		{"request started in current cycle", 10, 20, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prepareRefundFixture(t)
+			user := newRefundUser(t, "cycle", 5000)
+			sub := newActiveSubscription(t, user.Id, 100000, 2000)
+			now := time.Now().Unix()
+			sub.StartTime, sub.LastResetTime = now-7200, now-60
+			require.NoError(t, DB.Save(sub).Error)
+			log := newConsumeLog(t, user.Id, 0, "cycle-request")
+			require.NoError(t, LOG_DB.Model(log).Updates(map[string]any{"created_at": now - tc.logAge, "use_time": tc.useTime}).Error)
+			if tc.preconsumeAge > 0 {
+				record := &SubscriptionPreConsumeRecord{RequestId: log.RequestId, UserId: user.Id, UserSubscriptionId: sub.Id, PreConsumed: 20000, Status: "consumed"}
+				require.NoError(t, DB.Create(record).Error)
+				require.NoError(t, DB.Model(record).UpdateColumn("created_at", now-tc.preconsumeAge).Error)
+			}
+			err := DoSelfRefundSubscription(user.Id, log.Id, sub.Id, 20000, 10000, "empty_response", log.RequestId, noLimits)
+			var after UserSubscription
+			require.NoError(t, DB.First(&after, sub.Id).Error)
+			if tc.wantError {
+				require.Error(t, err)
+				assert.EqualValues(t, 2000, after.AmountUsed)
+				var count int64
+				require.NoError(t, DB.Model(&LogRefund{}).Count(&count).Error)
+				assert.Zero(t, count)
+			} else {
+				require.NoError(t, err)
+				assert.Zero(t, after.AmountUsed)
+			}
+		})
+	}
 }
 
 // Ineligible subscriptions fail closed and leave the allowance untouched.

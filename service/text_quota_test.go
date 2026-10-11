@@ -82,6 +82,7 @@ func TestFixedPriceBillingDatabaseMatrix(t *testing.T) {
 			t.Cleanup(func() { model.DB, model.LOG_DB = oldDB, oldLogDB; common.SetDatabaseTypes(oldMainType, oldLogType) })
 			require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Channel{}))
 			require.NoError(t, logDB.AutoMigrate(&model.Log{}))
+			require.NoError(t, model.InitXingyaTables(db))
 			versionQuery := "select version()"
 			if dialect.name == common.DatabaseTypeSQLite {
 				versionQuery = "select sqlite_version()"
@@ -96,9 +97,16 @@ func TestFixedPriceBillingDatabaseMatrix(t *testing.T) {
 
 func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 	t.Helper()
+	refundSetting := operation_setting.GetSelfRefundSetting()
+	previousRefundSetting := *refundSetting
+	*refundSetting = operation_setting.SelfRefundSetting{Enabled: false, OnlyPerRequest: true}
+	t.Cleanup(func() { *refundSetting = previousRefundSetting })
 	const mixed = `len <= 32000 ? tier("short", fixed(0.01)) : tier("long", p * 2)`
 	const flat = `tier("request", fixed(0.01))`
 	const startingQuota = 2_000_000
+	inviter := &model.User{Username: "fixed-inviter", AffCode: "fixed-inviter", Quota: 100000, Status: common.UserStatusEnabled}
+	require.NoError(t, db.Create(inviter).Error)
+	t.Cleanup(func() { require.NoError(t, db.Unscoped().Delete(inviter).Error) })
 	const imageExpression = `tier("standard", p * 5 + cr * 1.25 + img * 8 + img_cr * 2 + c * 30)`
 	imageUsage := &dto.Usage{PromptTokens: 1000, CompletionTokens: 100, TotalTokens: 1100,
 		PromptTokensDetails: dto.InputTokenDetails{CachedTokens: 300, ImageTokens: 600, CachedTokensDetails: &dto.CachedTokenDetails{ImageTokens: common.GetPointer(200)}}}
@@ -115,30 +123,34 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 		want                                      int
 		unit                                      billingexpr.BillingUnit
 		requestedImages, actualImages             int
+		qualifies                                 bool
+		endReason                                 relaycommon.StreamEndReason
 	}{
 		{name: "missing usage charges once", expression: flat, want: 5000, unit: billingexpr.BillingUnitRequest},
 		{name: "zero usage charges once", expression: flat, usage: &dto.Usage{}, want: 5000, unit: billingexpr.BillingUnitRequest},
-		{name: "stream charges once", expression: flat, stream: true, usage: &dto.Usage{PromptTokens: 100, CompletionTokens: 20, TotalTokens: 120}, want: 5000, unit: billingexpr.BillingUnitRequest},
-		{name: "audio zero usage charges once", expression: flat, audio: true, usage: &dto.Usage{}, want: 5000, unit: billingexpr.BillingUnitRequest},
-		{name: "audio missing usage charges once", expression: flat, audio: true, want: 5000, unit: billingexpr.BillingUnitRequest},
+		{name: "stream charges once", expression: flat, stream: true, usage: &dto.Usage{PromptTokens: 100, CompletionTokens: 20, TotalTokens: 120}, want: 5000, unit: billingexpr.BillingUnitRequest, qualifies: true},
+		{name: "refundable truncation does not qualify", expression: flat, stream: true, endReason: relaycommon.StreamEndReasonTimeout, usage: &dto.Usage{PromptTokens: 100, CompletionTokens: 512, TotalTokens: 612}, want: 5000, unit: billingexpr.BillingUnitRequest},
+		{name: "truncation after refund cap still qualifies", expression: flat, stream: true, endReason: relaycommon.StreamEndReasonTimeout, usage: &dto.Usage{PromptTokens: 100, CompletionTokens: 513, TotalTokens: 613}, want: 5000, unit: billingexpr.BillingUnitRequest, qualifies: true},
+		{name: "audio zero usage charges once", expression: flat, audio: true, usage: &dto.Usage{}, want: 5000, unit: billingexpr.BillingUnitRequest, qualifies: true},
+		{name: "audio missing usage charges once", expression: flat, audio: true, want: 5000, unit: billingexpr.BillingUnitRequest, qualifies: true},
 		{name: "token reservation refunds to fixed price", expression: mixed, estimate: 50000, usage: &dto.Usage{PromptTokens: 100, TotalTokens: 100}, want: 5000, unit: billingexpr.BillingUnitRequest},
 		{name: "fixed reservation settles token fallback", expression: mixed, estimate: 100, usage: &dto.Usage{PromptTokens: 50000, TotalTokens: 50000}, want: 50000, unit: billingexpr.BillingUnitToken},
 		{name: "missing usage uses estimated token fallback", expression: mixed, estimate: 50000, want: 50000, unit: billingexpr.BillingUnitToken},
 		{name: "evaluation error retains fixed reservation metadata", expression: `p == 50 ? tier("error", param("missing") * p + img_cr * 2) : tier("request", fixed(0.01))`, estimate: 100, usage: &dto.Usage{PromptTokens: 50, TotalTokens: 50}, want: 5000, unit: billingexpr.BillingUnitRequest},
 		{name: "explicit zero remains free", expression: `tier("free", fixed(0))`, usage: &dto.Usage{PromptTokens: 100, TotalTokens: 100}, unit: billingexpr.BillingUnitRequest},
-		{name: "multipliers and separate tool surcharge", expression: flat + ` * (param("fast") == true ? 2 : 1)`, groupRatio: 1.5, tool: true, want: 18000, unit: billingexpr.BillingUnitRequest},
+		{name: "multipliers and separate tool surcharge", expression: flat + ` * (param("fast") == true ? 2 : 1)`, groupRatio: 1.5, tool: true, want: 18000, unit: billingexpr.BillingUnitRequest, qualifies: true},
 		{name: "failed request refunds exactly once", expression: flat, refund: true},
 		{name: "insufficient wallet never reserves tokens", expression: flat, insufficient: true},
-		{name: "image cache stream settles usage and refunds unused reservation", expression: imageExpression, estimate: 10000, usage: imageUsage, stream: true, want: 4113, unit: billingexpr.BillingUnitToken},
-		{name: "audio settlement records image cache billing inputs", expression: imageExpression, estimate: 10000, usage: imageUsage, audio: true, want: 4113, unit: billingexpr.BillingUnitToken},
-		{name: "realtime records actual expression inputs", expression: imageExpression, estimate: 10000, usage: imageUsage, realtime: true, want: 4000, unit: billingexpr.BillingUnitToken},
+		{name: "image cache stream settles usage and refunds unused reservation", expression: imageExpression, estimate: 10000, usage: imageUsage, stream: true, want: 4113, unit: billingexpr.BillingUnitToken, qualifies: true},
+		{name: "audio settlement records image cache billing inputs", expression: imageExpression, estimate: 10000, usage: imageUsage, audio: true, want: 4113, unit: billingexpr.BillingUnitToken, qualifies: true},
+		{name: "realtime records actual expression inputs", expression: imageExpression, estimate: 10000, usage: imageUsage, realtime: true, want: 4000, unit: billingexpr.BillingUnitToken, qualifies: true},
 		{name: "image cache insufficient wallet never reserves tokens", expression: imageExpression, estimate: 10000, insufficient: true},
-		{name: "image quantity refunds missing images", expression: `tier("image", fixed(0.04)) * image_count`, requestedImages: 3, actualImages: 2, want: 40000, unit: billingexpr.BillingUnitRequest},
-		{name: "image quantity keeps request when actual missing", expression: `tier("image", fixed(0.04)) * image_count`, requestedImages: 3, want: 60000, unit: billingexpr.BillingUnitRequest},
+		{name: "image quantity refunds missing images", expression: `tier("image", fixed(0.04)) * image_count`, requestedImages: 3, actualImages: 2, want: 40000, unit: billingexpr.BillingUnitRequest, qualifies: true},
+		{name: "image quantity keeps request when actual missing", expression: `tier("image", fixed(0.04)) * image_count`, requestedImages: 3, want: 60000, unit: billingexpr.BillingUnitRequest, qualifies: true},
 		{name: "image quantity zero price stays free", expression: `tier("image", fixed(0)) * image_count`, requestedImages: 3, actualImages: 2, unit: billingexpr.BillingUnitRequest},
 		{name: "image quantity failure refunds reservation", expression: `tier("image", fixed(0.04)) * image_count`, requestedImages: 3, refund: true},
 		{name: "image quantity exceeds one-image wallet before submission", expression: `tier("image", fixed(0.04)) * image_count`, requestedImages: 4, wallet: 20000, insufficient: true},
-		{name: "image override reserves extra quantity", expression: `tier("image", fixed(0.04)) * image_count`, requestedImages: 1, outboundImages: 4, want: 80000, unit: billingexpr.BillingUnitRequest},
+		{name: "image override reserves extra quantity", expression: `tier("image", fixed(0.04)) * image_count`, requestedImages: 1, outboundImages: 4, want: 80000, unit: billingexpr.BillingUnitRequest, qualifies: true},
 		{name: "image override cannot exceed remaining wallet", expression: `tier("image", fixed(0.04)) * image_count`, requestedImages: 1, outboundImages: 4, wallet: 40000, reserveInsufficient: true, refund: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -151,11 +163,14 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 			}
 			user := model.User{Username: fmt.Sprintf("fixed_billing_%d", index), Quota: quota, Status: common.UserStatusEnabled}
 			require.NoError(t, db.Create(&user).Error)
+			reward := &model.XingyaInviteRewardPending{InviteeId: user.Id, InviterId: inviter.Id, State: model.InviteRewardStatePending, CreatedAt: common.GetTimestamp()}
+			require.NoError(t, db.Create(reward).Error)
 			token := model.Token{UserId: user.Id, Key: fmt.Sprintf("fixed-billing-test-%d", index), Name: "fixed-billing", RemainQuota: startingQuota, Status: common.TokenStatusEnabled}
 			require.NoError(t, db.Create(&token).Error)
 			channel := model.Channel{Name: "fixed-billing", Key: "unused", Status: common.ChannelStatusEnabled}
 			require.NoError(t, db.Create(&channel).Error)
 			t.Cleanup(func() {
+				require.NoError(t, db.Delete(reward).Error)
 				require.NoError(t, logDB.Where("user_id = ?", user.Id).Delete(&model.Log{}).Error)
 				require.NoError(t, db.Unscoped().Delete(&token).Error)
 				require.NoError(t, db.Unscoped().Delete(&user).Error)
@@ -177,11 +192,21 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 			snapshot.EstimatedImageCount = trace.ImageCount
 			info := &relaycommon.RelayInfo{UserId: user.Id, TokenId: token.Id, TokenKey: token.Key, ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channel.Id}, OriginModelName: "fixed-test", UsingGroup: "default", UserGroup: "default", UserSetting: dto.UserSetting{BillingPreference: "wallet_only"}, ForcePreConsume: true, StartTime: time.Now(), IsStream: tc.stream, RelayFormat: types.RelayFormatOpenAI, PriceData: hosttypes.PriceData{GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: group}}, TieredBillingSnapshot: snapshot, BillingRequestInput: request}
 			info.SetEstimatePromptTokens(tc.estimate)
+			if tc.endReason != "" {
+				info.StreamStatus = relaycommon.NewStreamStatus()
+				info.StreamStatus.SetEndReason(tc.endReason, nil)
+			}
 			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 			ctx.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
-			if tc.expression == imageExpression {
+			if tc.expression == imageExpression || tc.requestedImages > 0 {
 				ctx.Request.URL.Path = "/v1/images/generations"
 				info.RelayMode = relayconstant.RelayModeImagesGenerations
+			}
+			if tc.audio {
+				ctx.Request.URL.Path = "/v1/audio/transcriptions"
+			}
+			if tc.realtime {
+				ctx.Request.URL.Path = "/v1/realtime"
 			}
 			apiErr := PreConsumeBilling(ctx, reservation, info)
 			if tc.insufficient {
@@ -292,6 +317,28 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 			assert.Equal(t, tc.want, token.UsedQuota)
 			if !tc.refund && !tc.insufficient {
 				assert.Equal(t, 1, user.RequestCount)
+			}
+			require.NoError(t, db.First(reward, reward.Id).Error)
+			if tc.qualifies {
+				assert.Equal(t, 1, reward.QualifyingCalls)
+				assert.Equal(t, tc.want, reward.QualifyingQuota)
+			} else {
+				assert.Zero(t, reward.QualifyingCalls)
+				assert.Zero(t, reward.QualifyingQuota)
+			}
+			if tc.want > 0 && !tc.qualifies && !tc.refund && !tc.insufficient {
+				// A failed call excluded while refunds are disabled must stay excluded
+				// when the operator later enables refunds; it cannot remove valid progress.
+				require.True(t, model.RecordSuccessfulBillableCall(user.Id, 50000))
+				*refundSetting = operation_setting.SelfRefundSetting{Enabled: true, Ratio: 0.5, WindowHours: 48}
+				var log model.Log
+				require.NoError(t, logDB.Where("user_id = ? AND type = ?", user.Id, model.LogTypeConsume).First(&log).Error)
+				_, err := DoSelfRefund(user.Id, log.Id, log.RequestId)
+				require.NoError(t, err)
+				require.NoError(t, db.First(reward, reward.Id).Error)
+				assert.Equal(t, 1, reward.QualifyingCalls)
+				assert.Equal(t, 50000, reward.QualifyingQuota)
+				*refundSetting = operation_setting.SelfRefundSetting{Enabled: false, OnlyPerRequest: true}
 			}
 		})
 	}

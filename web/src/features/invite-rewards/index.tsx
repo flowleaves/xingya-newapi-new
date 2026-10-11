@@ -1,3 +1,4 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ChevronLeft,
   ChevronRight,
@@ -8,11 +9,11 @@ import {
   Loader2,
   RefreshCw,
 } from 'lucide-react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { CopyButton } from '@/components/copy-button'
 import { SectionPageLayout } from '@/components/layout'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -23,12 +24,19 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import { CopyButton } from '@/components/copy-button'
 import { Input } from '@/components/ui/input'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import { getAffiliateCode } from '@/features/wallet/api'
 import { generateAffiliateLink } from '@/features/wallet/lib'
-import { formatQuota, formatTimestampToDate } from '@/lib/format'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatNumber, formatQuota, formatTimestampToDate } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import {
   DEFAULT_CURRENCY_CONFIG,
@@ -55,11 +63,15 @@ function quotaPerTier(quotaPerUnit: number): number {
 }
 
 /** Render an internal quota amount as platform currency (芽点). */
-function formatTierAmount(quota: number, perTier: number): string {
+function formatTierAmount(
+  quota: number,
+  perTier: number,
+  locale?: string
+): string {
   if (!Number.isFinite(quota) || perTier <= 0) {
     return '—'
   }
-  return `🌱${formatQuota(Math.max(0, quota) / perTier)}`
+  return `🌱${formatNumber(Math.max(0, quota) / perTier, locale)}`
 }
 
 function stateVariant(state: InviteRewardState) {
@@ -97,9 +109,12 @@ function RewardRow({
   requiredCalls: number
   requiredTier: number
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const queryClient = useQueryClient()
-  const quotaPerUnit = useSystemConfigStore((s) => s.config.currency.quotaPerUnit)
+  const quotaPerUnit = useSystemConfigStore(
+    (s) => s.config.currency.quotaPerUnit
+  )
   const perTier = quotaPerTier(quotaPerUnit)
   const claim = useMutation({
     mutationFn: () => claimInviteReward(reward.id),
@@ -119,14 +134,19 @@ function RewardRow({
   })
 
   const canClaim = reward.state === 'eligible'
-  const label = reward.invitee_display_name || reward.invitee_username || `#${reward.invitee_id}`
+  const label =
+    reward.invitee_display_name ||
+    reward.invitee_username ||
+    `#${reward.invitee_id}`
 
   return (
     <TableRow>
       <TableCell>
         <div className='min-w-32'>
           <div className='font-medium'>{label}</div>
-          <div className='text-muted-foreground text-xs'>#{reward.invitee_id}</div>
+          <div className='text-muted-foreground text-xs'>
+            #{reward.invitee_id}
+          </div>
         </div>
       </TableCell>
       <TableCell>
@@ -136,14 +156,18 @@ function RewardRow({
             {requiredCalls}
           </span>
           <span className='text-muted-foreground'>
-            {formatTierAmount(reward.qualifying_quota, perTier)} / 🌱
-            {formatQuota(requiredTier)}
+            {formatTierAmount(reward.qualifying_quota, perTier, locale)} / 🌱
+            {formatNumber(requiredTier, locale)}
           </span>
         </div>
       </TableCell>
-      <TableCell className='font-mono'>{formatQuota(reward.inviter_quota)}</TableCell>
+      <TableCell className='font-mono'>
+        {formatQuota(reward.inviter_quota)}
+      </TableCell>
       <TableCell>
-        <Badge variant={stateVariant(reward.state)}>{stateLabel(reward.state, t)}</Badge>
+        <Badge variant={stateVariant(reward.state)}>
+          {stateLabel(reward.state, t)}
+        </Badge>
       </TableCell>
       <TableCell className='text-muted-foreground text-xs'>
         {grantTimeLabel(reward, t)}
@@ -156,7 +180,11 @@ function RewardRow({
             disabled={claim.isPending}
             aria-label={t('Claim reward')}
           >
-            {claim.isPending ? <Loader2 className='animate-spin' /> : <HandCoins />}
+            {claim.isPending ? (
+              <Loader2 className='animate-spin' />
+            ) : (
+              <HandCoins />
+            )}
             {t('Claim now')}
           </Button>
         ) : null}
@@ -166,7 +194,8 @@ function RewardRow({
 }
 
 export function InviteRewardsPage() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const [page, setPage] = useState(1)
   const codeQuery = useQuery({
     queryKey: ['affiliate-code'],
@@ -195,7 +224,9 @@ export function InviteRewardsPage() {
           disabled={rewardsQuery.isFetching || codeQuery.isFetching}
           aria-label={t('Refresh')}
         >
-          <RefreshCw className={rewardsQuery.isFetching ? 'animate-spin' : undefined} />
+          <RefreshCw
+            className={rewardsQuery.isFetching ? 'animate-spin' : undefined}
+          />
           {t('Refresh')}
         </Button>
       </SectionPageLayout.Actions>
@@ -203,12 +234,22 @@ export function InviteRewardsPage() {
         <div className='mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-5'>
           <Card>
             <CardHeader>
-              <CardTitle className='flex items-center gap-2'><Gift />{t('Your referral link')}</CardTitle>
-              <CardDescription>{t('Share this link to invite new users.')}</CardDescription>
+              <CardTitle className='flex items-center gap-2'>
+                <Gift />
+                {t('Your referral link')}
+              </CardTitle>
+              <CardDescription>
+                {t('Share this link to invite new users.')}
+              </CardDescription>
             </CardHeader>
             <CardContent className='grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center'>
               <div className='flex min-w-0 items-center gap-2'>
-                <Input readOnly value={link} className='min-w-0 font-mono text-xs' aria-label={t('Referral link')} />
+                <Input
+                  readOnly
+                  value={link}
+                  className='min-w-0 font-mono text-xs'
+                  aria-label={t('Referral link')}
+                />
                 <CopyButton
                   value={link}
                   variant='outline'
@@ -218,8 +259,12 @@ export function InviteRewardsPage() {
                 />
               </div>
               <div className='flex items-center gap-2 text-sm'>
-                <span className='text-muted-foreground'>{t('Invite code')}</span>
-                <code className='rounded bg-muted px-2 py-1 font-mono'>{code || t('Loading')}</code>
+                <span className='text-muted-foreground'>
+                  {t('Invite code')}
+                </span>
+                <code className='bg-muted rounded px-2 py-1 font-mono'>
+                  {code || t('Loading')}
+                </code>
                 <CopyButton
                   value={code}
                   variant='ghost'
@@ -234,7 +279,9 @@ export function InviteRewardsPage() {
           <Card>
             <CardHeader>
               <CardTitle>{t('Reward progress')}</CardTitle>
-              <CardDescription>{t('{{count}} invited accounts', { count: data?.total || 0 })}</CardDescription>
+              <CardDescription>
+                {t('{{count}} invited accounts', { count: data?.total || 0 })}
+              </CardDescription>
             </CardHeader>
             <CardContent className='p-0'>
               <Table>
@@ -249,15 +296,24 @@ export function InviteRewardsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {data?.items?.length ? data.items.map((reward) => (
-                    <RewardRow
-                      key={reward.id}
-                      reward={reward}
-                      requiredCalls={data.required_calls}
-                      requiredTier={data.required_consume_tier}
-                    />
-                  )) : (
-                    <TableRow><TableCell colSpan={6} className='text-muted-foreground py-10 text-center'>{t('No invite rewards yet.')}</TableCell></TableRow>
+                  {data?.items?.length ? (
+                    data.items.map((reward) => (
+                      <RewardRow
+                        key={reward.id}
+                        reward={reward}
+                        requiredCalls={data.required_calls}
+                        requiredTier={data.required_consume_tier}
+                      />
+                    ))
+                  ) : (
+                    <TableRow>
+                      <TableCell
+                        colSpan={6}
+                        className='text-muted-foreground py-10 text-center'
+                      >
+                        {t('No invite rewards yet.')}
+                      </TableCell>
+                    </TableRow>
                   )}
                 </TableBody>
               </Table>
@@ -266,16 +322,63 @@ export function InviteRewardsPage() {
 
           <Card size='sm'>
             <CardContent className='grid gap-3 text-sm sm:grid-cols-2'>
-              <div className='flex gap-2'><Info className='text-muted-foreground mt-0.5 size-4 shrink-0' /><span>{t('Only successful billable model calls count. Free, failed, zero-quota, refunded, and violation charges do not count.')}</span></div>
-              <div className='flex gap-2'><Clock3 className='text-muted-foreground mt-0.5 size-4 shrink-0' /><span>{t('Once both conditions are met you can claim immediately; otherwise the reward is granted automatically at local midnight.')}</span></div>
-              <div className='text-muted-foreground sm:col-span-2'>{t('An invited account qualifies after {{calls}} successful billable calls and 🌱{{tier}} of cumulative spend.', { calls: data?.required_calls ?? 0, tier: formatQuota(data?.required_consume_tier ?? 0) })}</div>
+              <div className='flex gap-2'>
+                <Info className='text-muted-foreground mt-0.5 size-4 shrink-0' />
+                <span>
+                  {t(
+                    'Only successful billable model calls count. Free, failed, zero-quota, refunded, and violation charges do not count.'
+                  )}
+                </span>
+              </div>
+              <div className='flex gap-2'>
+                <Clock3 className='text-muted-foreground mt-0.5 size-4 shrink-0' />
+                <span>
+                  {t(
+                    'Once both conditions are met you can claim immediately; otherwise the reward is granted automatically at local midnight.'
+                  )}
+                </span>
+              </div>
+              <div className='text-muted-foreground sm:col-span-2'>
+                {t(
+                  'An invited account qualifies after {{calls}} successful billable calls and 🌱{{tier}} of cumulative spend.',
+                  {
+                    calls: data?.required_calls ?? 0,
+                    tier: formatNumber(
+                      data?.required_consume_tier ?? 0,
+                      locale
+                    ),
+                  }
+                )}
+              </div>
             </CardContent>
           </Card>
 
           <div className='flex items-center justify-end gap-2'>
-            <Button variant='outline' size='sm' onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page <= 1 || rewardsQuery.isFetching} aria-label={t('Previous page')}><ChevronLeft />{t('Previous')}</Button>
-            <span className='text-muted-foreground text-sm tabular-nums'>{page} / {totalPages}</span>
-            <Button variant='outline' size='sm' onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={page >= totalPages || rewardsQuery.isFetching} aria-label={t('Next page')}>{t('Next')}<ChevronRight /></Button>
+            <Button
+              variant='outline'
+              size='sm'
+              onClick={() => setPage((value) => Math.max(1, value - 1))}
+              disabled={page <= 1 || rewardsQuery.isFetching}
+              aria-label={t('Previous page')}
+            >
+              <ChevronLeft />
+              {t('Previous')}
+            </Button>
+            <span className='text-muted-foreground text-sm tabular-nums'>
+              {page} / {totalPages}
+            </span>
+            <Button
+              variant='outline'
+              size='sm'
+              onClick={() =>
+                setPage((value) => Math.min(totalPages, value + 1))
+              }
+              disabled={page >= totalPages || rewardsQuery.isFetching}
+              aria-label={t('Next page')}
+            >
+              {t('Next')}
+              <ChevronRight />
+            </Button>
           </div>
         </div>
       </SectionPageLayout.Content>

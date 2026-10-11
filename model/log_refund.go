@@ -207,6 +207,10 @@ func DoSelfRefundWallet(userId int, logId int, baseQuota int, refundAmount int, 
 	if refundAmount <= 0 {
 		return errors.New("补回金额无效")
 	}
+	log, err := GetLogById(logId)
+	if err != nil || log.UserId != userId || log.Type != LogTypeConsume || log.RequestId != requestId {
+		return errors.New("消费记录不存在")
+	}
 	refund := &LogRefund{
 		UserId:        userId,
 		LogId:         logId,
@@ -220,6 +224,9 @@ func DoSelfRefundWallet(userId int, logId int, baseQuota int, refundAmount int, 
 	}
 
 	if err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := revokeRefundedInviteCallTx(tx, log, baseQuota); err != nil {
+			return err
+		}
 		// 1. 串行化同一用户的并发补回，使限额校验与幂等插入处于同一临界区
 		if err := lockUserForRefundTx(tx, userId); err != nil {
 			return err
@@ -290,6 +297,12 @@ func DoSelfRefundSubscription(userId int, logId int, subscriptionId int, baseQuo
 	if refundAmount <= 0 {
 		return errors.New("补回金额无效")
 	}
+	// LOG_DB can be separate, or share a one-connection SQLite pool with DB. Read
+	// the original log before opening the accounting transaction in either case.
+	log, err := GetLogById(logId)
+	if err != nil || log.UserId != userId || log.Type != LogTypeConsume || log.RequestId != requestId {
+		return errors.New("消费记录不存在")
+	}
 	refund := &LogRefund{
 		UserId:         userId,
 		LogId:          logId,
@@ -304,6 +317,9 @@ func DoSelfRefundSubscription(userId int, logId int, subscriptionId int, baseQuo
 	}
 
 	if err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := revokeRefundedInviteCallTx(tx, log, baseQuota); err != nil {
+			return err
+		}
 		// 1. 先锁用户行（与钱包路径同一把锁、同一顺序，避免互相死锁）
 		if err := lockUserForRefundTx(tx, userId); err != nil {
 			return err
@@ -340,8 +356,25 @@ func DoSelfRefundSubscription(userId int, logId int, subscriptionId int, baseQuo
 		if sub.Status == "deleted" || sub.Status == "expired" || sub.Status == "cancelled" {
 			return errors.New("订阅已失效，无法补回")
 		}
-		// 排除情形：跨周期重置（amount_used 已清零，退款会被 clamp 吃掉新周期额度）
-		if sub.LastResetTime > 0 && sub.LastResetTime > sub.StartTime && sub.AmountUsed == 0 {
+		// Pre-consumption assigns a request to its cycle even if its log is written
+		// after a reset. Legacy requests without a retained pre-consume record fall
+		// back to the logged request start estimate. Never use current usage as a
+		// cycle identifier, or a long legacy request's completion time as its start.
+		consumedAt := log.CreatedAt - int64(max(0, log.UseTime))
+		var record SubscriptionPreConsumeRecord
+		if requestId != "" {
+			err := tx.Where("request_id = ? AND user_id = ? AND user_subscription_id = ?", requestId, userId, subscriptionId).First(&record).Error
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			if err == nil {
+				if record.Status != "consumed" {
+					return errors.New("该请求已退回订阅额度")
+				}
+				consumedAt = record.CreatedAt
+			}
+		}
+		if consumedAt <= 0 || consumedAt < sub.LastResetTime {
 			return errors.New("订阅周期已重置，无法补回")
 		}
 

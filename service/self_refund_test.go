@@ -32,7 +32,8 @@ func setupRefundServiceDB(t *testing.T) *gorm.DB {
 	model.DB, model.LOG_DB = db, db
 	t.Cleanup(func() { model.DB, model.LOG_DB = prevDB, prevLogDB })
 
-	require.NoError(t, db.AutoMigrate(&model.Log{}, &model.User{}, &model.LogRefund{}))
+	require.NoError(t, db.AutoMigrate(&model.Log{}, &model.User{}, &model.LogRefund{}, &model.SubscriptionPreConsumeRecord{}))
+	require.NoError(t, model.InitXingyaTables(db))
 
 	prevRedis, prevLogConsume := common.RedisEnabled, common.LogConsumeEnabled
 	prevBatch := common.BatchUpdateEnabled

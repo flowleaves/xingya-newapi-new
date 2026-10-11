@@ -65,24 +65,19 @@ func JudgeSelfRefund(log *model.Log, refundedLogIds map[int]bool) *RefundableLog
 	}
 
 	// 解析 other JSON
-	var other map[string]interface{}
+	var other map[string]any
 	if log.Other != "" {
 		if err := common.UnmarshalJsonStr(log.Other, &other); err != nil {
 			return nil
 		}
 	}
 
-	// 通用排除：非 chat 路径（request_path 不是 chat/completions、responses 或 messages）
 	requestPath, _ := other["request_path"].(string)
-	if !isChatRequestPath(requestPath) {
+	reason := selfRefundFailureReason(requestPath, log.CompletionTokens, log.IsStream, getStreamEndReason(other), toolSurchargesNotEmpty(other))
+	if reason == "" {
 		return nil
 	}
 	if setting.OnlyPerRequest && !isPerRequestBilling(other) {
-		return nil
-	}
-
-	// 通用排除：工具附加费（tool_surcharges 非空）
-	if toolSurchargesNotEmpty(other) {
 		return nil
 	}
 
@@ -124,42 +119,35 @@ func JudgeSelfRefund(log *model.Log, refundedLogIds map[int]bool) *RefundableLog
 		return nil
 	}
 
-	// 判定 A：空返回（completion_tokens=0 且 baseQuota>0）
-	if log.CompletionTokens == 0 && baseQuota > 0 {
-		return &RefundableLogInfo{
-			LogId:          log.Id,
-			CreatedAt:      log.CreatedAt,
-			ModelName:      log.ModelName,
-			Quota:          log.Quota,
-			BaseQuota:      baseQuota,
-			FundingSource:  fundingSource,
-			SubscriptionId: subscriptionId,
-			RefundAmount:   refundAmount,
-			Reason:         string(RefundReasonEmpty),
-			RequestId:      log.RequestId,
-		}
+	return &RefundableLogInfo{
+		LogId:          log.Id,
+		CreatedAt:      log.CreatedAt,
+		ModelName:      log.ModelName,
+		Quota:          log.Quota,
+		BaseQuota:      baseQuota,
+		FundingSource:  fundingSource,
+		SubscriptionId: subscriptionId,
+		RefundAmount:   refundAmount,
+		Reason:         string(reason),
+		RequestId:      log.RequestId,
 	}
+}
 
-	// 判定 B：流式截断（is_stream 且 end_reason ∈ 截断集合，且未产出完整回答）
-	if log.IsStream {
-		endReason := getStreamEndReason(other)
-		if isTruncationEndReason(endReason) && log.CompletionTokens <= truncationRefundMaxCompletionTokens {
-			return &RefundableLogInfo{
-				LogId:          log.Id,
-				CreatedAt:      log.CreatedAt,
-				ModelName:      log.ModelName,
-				Quota:          log.Quota,
-				BaseQuota:      baseQuota,
-				FundingSource:  fundingSource,
-				SubscriptionId: subscriptionId,
-				RefundAmount:   refundAmount,
-				Reason:         string(RefundReasonStreamTrunc),
-				RequestId:      log.RequestId,
-			}
-		}
+// selfRefundFailureReason is the stable failure classification shared by refunds and
+// invite qualification. It deliberately ignores enablement, the claim window, pricing
+// restrictions and payout limits: changing those settings must not make failed calls
+// contribute to an immediately claimable invite reward.
+func selfRefundFailureReason(requestPath string, completionTokens int, isStream bool, endReason string, hasToolSurcharges bool) SelfRefundReason {
+	if !isChatRequestPath(requestPath) || hasToolSurcharges {
+		return ""
 	}
-
-	return nil
+	if completionTokens == 0 {
+		return RefundReasonEmpty
+	}
+	if isStream && isTruncationEndReason(endReason) && completionTokens <= truncationRefundMaxCompletionTokens {
+		return RefundReasonStreamTrunc
+	}
+	return ""
 }
 
 // Judge the consumed request's billing metadata, never today's model pricing.
@@ -189,12 +177,12 @@ func isChatRequestPath(path string) bool {
 
 // toolSurchargesNotEmpty 检查 tool_surcharges 是否非空
 // 空判断：无键→false，空数组→false，非空数组→true
-func toolSurchargesNotEmpty(other map[string]interface{}) bool {
+func toolSurchargesNotEmpty(other map[string]any) bool {
 	raw, ok := other["tool_surcharges"]
 	if !ok {
 		return false
 	}
-	items, ok := raw.([]interface{})
+	items, ok := raw.([]any)
 	if !ok || len(items) == 0 {
 		return false
 	}
@@ -202,7 +190,7 @@ func toolSurchargesNotEmpty(other map[string]interface{}) bool {
 }
 
 // getFundingSource 获取资金来源（默认 wallet）
-func getFundingSource(other map[string]interface{}) string {
+func getFundingSource(other map[string]any) string {
 	if source, ok := other["billing_source"].(string); ok {
 		return source
 	}
@@ -210,7 +198,7 @@ func getFundingSource(other map[string]interface{}) string {
 }
 
 // getSubscriptionId 获取订阅ID
-func getSubscriptionId(other map[string]interface{}) int {
+func getSubscriptionId(other map[string]any) int {
 	if id, ok := other["subscription_id"].(float64); ok {
 		return int(id)
 	}
@@ -218,12 +206,12 @@ func getSubscriptionId(other map[string]interface{}) int {
 }
 
 // getStreamEndReason 从 other.stream_status 中提取 end_reason
-func getStreamEndReason(other map[string]interface{}) string {
+func getStreamEndReason(other map[string]any) string {
 	raw, ok := other["stream_status"]
 	if !ok {
 		return ""
 	}
-	status, ok := raw.(map[string]interface{})
+	status, ok := raw.(map[string]any)
 	if !ok {
 		return ""
 	}

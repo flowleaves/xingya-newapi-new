@@ -460,8 +460,6 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	billingErr := SettleBilling(ctx, relayInfo, summary.Quota)
 	if billingErr != nil {
 		logger.LogError(ctx, "error settling billing: "+billingErr.Error())
-	} else if summary.hasBillableUsage() && summary.Quota > 0 {
-		model.RecordSuccessfulBillableCall(relayInfo.UserId, summary.Quota)
 	}
 
 	logModel := summary.ModelName
@@ -535,6 +533,15 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	}
 
 	attachQuotaSaturation(ctx, relayInfo, other)
+	metadata := other.Snapshot()
+	requestPath, _ := metadata["request_path"].(string)
+	failureReason := selfRefundFailureReason(requestPath, summary.CompletionTokens, relayInfo.IsStream,
+		getStreamEndReason(metadata), len(summary.ToolSurchargeItems) > 0)
+	inviteQualifying := false
+	if billingErr == nil && summary.hasBillableUsage() && summary.Quota > 0 && failureReason == "" {
+		inviteQualifying = model.RecordSuccessfulBillableCall(relayInfo.UserId, summary.Quota)
+	}
+	other.SetAudit("invite_qualifying", inviteQualifying)
 
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
