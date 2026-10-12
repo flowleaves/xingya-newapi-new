@@ -4120,6 +4120,7 @@
     "Ollama": "Ollama",
     "Ollama Models": "Ollama Модели",
     "Once both conditions are met you can claim immediately; otherwise the reward is granted automatically at local midnight.": "Когда выполнены оба условия, награду можно получить сразу; иначе она начисляется автоматически в 00:00 по местному времени.",
+    "Once per day, Beijing time. Check-in credit only pays for request-priced models. Context tiers reserve the highest fee and settle at the actual tier. Unsupported tools and media require a regular key. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "Один раз в день по пекинскому времени. Бонусный баланс доступен только для моделей с оплатой за запрос. При тарифах по длине контекста резервируется максимальная цена, затем применяется фактический тариф. Для неподдерживаемых инструментов и медиа нужен обычный ключ. Старые награды остаются на обычном балансе. Бонусные расходы не учитываются в условиях приглашений.",
     "Once per day, Beijing time. Use a check-in key with an output limit. Unsupported tools and media require a regular key. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "Получение раз в день по пекинскому времени. Задайте лимит вывода для бонусного ключа. Для неподдерживаемых инструментов и медиа нужен обычный ключ. Прежние награды остаются на обычном балансе. Расход бонусов не учитывается для приглашений.",
     "One API": "Один API",
     "One domain per line": "Один домен на строку",

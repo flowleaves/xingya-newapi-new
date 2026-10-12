@@ -41,6 +41,33 @@ func TestFixedPriceBranches(t *testing.T) {
 	}
 }
 
+func TestMaximumFixedRequestCost(t *testing.T) {
+	for _, tc := range []struct {
+		name, expression string
+		want             float64
+		invalid          bool
+	}{
+		{"flat request", `tier("request", fixed(0.01))`, 10000, false},
+		{"context tiers", `len <= 250000 ? tier("short", fixed(0.01)) : tier("long", fixed(0.02))`, 20000, false},
+		{"request multiplier", `(len <= 250000 ? tier("short", fixed(0.01)) : tier("long", fixed(0.02))) * (param("fast") == true ? 2 : 1)`, 40000, false},
+		{"free request", `tier("free", fixed(0))`, 0, false},
+		{"token pricing", `tier("tokens", p*2+c*8)`, 0, true},
+		{"mixed leaves", `len <= 250000 ? tier("short", fixed(0.01)) : tier("long", p*2+c*8)`, 0, true},
+		{"unreachable token leaf", `true ? tier("request", fixed(0.01)) : tier("tokens", p)`, 0, true},
+		{"unreachable invalid price", `true ? tier("request", fixed(0.01)) : tier("invalid", fixed(-1))`, 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cost, err := billingexpr.MaximumFixedRequestCost(tc.expression)
+			if tc.invalid {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, cost)
+		})
+	}
+}
+
 func TestFixedPriceRejectsInvalidLeavesIncludingUnselectedBranches(t *testing.T) {
 	for _, expression := range []string{
 		`true ? tier("ok", p) : tier("bad", fixed(-0.01))`,

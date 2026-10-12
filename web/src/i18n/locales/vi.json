@@ -4120,6 +4120,7 @@
     "Ollama": "Ollama",
     "Ollama Models": "Mô hình Ollama",
     "Once both conditions are met you can claim immediately; otherwise the reward is granted automatically at local midnight.": "Khi đủ cả hai điều kiện, bạn có thể nhận ngay; nếu không, phần thưởng sẽ được cấp tự động vào 24:00 giờ địa phương.",
+    "Once per day, Beijing time. Check-in credit only pays for request-priced models. Context tiers reserve the highest fee and settle at the actual tier. Unsupported tools and media require a regular key. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "Mỗi ngày một lần, theo giờ Bắc Kinh. Số dư điểm danh chỉ dùng cho mô hình tính phí theo lượt gọi. Với các mức giá theo ngữ cảnh, hệ thống tạm giữ phí cao nhất rồi quyết toán theo mức thực tế. Công cụ và đa phương tiện chưa hỗ trợ cần khóa thông thường. Phần thưởng cũ vẫn nằm trong số dư thông thường. Chi tiêu điểm danh không được tính vào điều kiện mời bạn.",
     "Once per day, Beijing time. Use a check-in key with an output limit. Unsupported tools and media require a regular key. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "Nhận một lần mỗi ngày theo giờ Bắc Kinh. Đặt giới hạn đầu ra cho khóa điểm danh. Công cụ và media chưa hỗ trợ cần khóa thường. Thưởng cũ giữ trong số dư thường. Chi tiêu điểm danh không tính vào thưởng mời bạn.",
     "One API": "Một API",
     "One domain per line": "Một tên miền mỗi dòng",

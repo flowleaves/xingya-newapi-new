@@ -26,7 +26,7 @@ func PreConsumeBilling(c *gin.Context, preConsumedQuota int, relayInfo *relaycom
 		if err != nil {
 			return CheckinBillingError(err)
 		}
-		preConsumedQuota = max(preConsumedQuota, budget)
+		preConsumedQuota = budget
 	}
 	if relayInfo != nil && relayInfo.QuotaClamp != nil {
 		return types.NewErrorWithStatusCode(

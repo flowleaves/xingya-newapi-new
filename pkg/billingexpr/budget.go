@@ -10,6 +10,58 @@ import (
 
 type costInterval struct{ lo, hi float64 }
 
+// MaximumFixedRequestCost accepts only request-priced leaves, including every
+// unselected branch. Token-dependent tier conditions may select another fixed
+// fee at settlement, so reserve the highest fee before submitting upstream.
+func MaximumFixedRequestCost(expression string) (float64, error) {
+	if _, err := CompileFromCache(expression); err != nil {
+		return 0, err
+	}
+	_, body := ParseExprVersion(expression)
+	tree, err := parser.Parse(body)
+	if err != nil {
+		return 0, err
+	}
+	if err = validateRequestPriceLeaves(tree.Node, 0); err != nil {
+		return 0, err
+	}
+	return MaximumTokenCost(expression, 0, 0)
+}
+
+func validateRequestPriceLeaves(node ast.Node, depth int) error {
+	if depth > 64 {
+		return fmt.Errorf("request pricing expression is too deep")
+	}
+	switch n := node.(type) {
+	case *ast.ConditionalNode:
+		if err := validateRequestPriceLeaves(n.Exp1, depth+1); err != nil {
+			return err
+		}
+		return validateRequestPriceLeaves(n.Exp2, depth+1)
+	case *ast.BinaryNode:
+		if n.Operator == "*" {
+			if isRequestPriceMultiplier(n.Right) {
+				return validateRequestPriceLeaves(n.Left, depth+1)
+			}
+			if isRequestPriceMultiplier(n.Left) {
+				return validateRequestPriceLeaves(n.Right, depth+1)
+			}
+		}
+	case *ast.CallNode:
+		callee, ok := n.Callee.(*ast.IdentifierNode)
+		if ok && callee.Value == "tier" && len(n.Arguments) == 2 {
+			fixed, ok := n.Arguments[1].(*ast.CallNode)
+			if ok {
+				callee, ok = fixed.Callee.(*ast.IdentifierNode)
+				if ok && callee.Value == "fixed" && len(fixed.Arguments) == 1 {
+					return nil // CompileFromCache already validates literal prices.
+				}
+			}
+		}
+	}
+	return fmt.Errorf("all pricing branches must use tier(name, fixed(price))")
+}
+
 // MaximumTokenCost bounds all token categories and both arms of every tier.
 // Unknown numeric request probes or functions are rejected, never sampled to
 // guess an upper bound. It does not alter the expression used for settlement.

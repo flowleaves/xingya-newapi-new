@@ -73,7 +73,7 @@ func TestCheckinBillingPostgres(t *testing.T) {
 			token := model.Token{UserId: user.Id, Key: common.NewRequestId(), Status: common.TokenStatusEnabled, ExpiredTime: -1, UnlimitedQuota: true, QuotaSource: model.CheckinQuotaSource, Group: "checkin-fixture"}
 			require.NoError(t, model.DB.Create(&token).Error)
 			require.NoError(t, model.DB.Create(&model.XingyaCheckinWallet{UserID: user.Id, Available: tc.credit, Granted: tc.credit}).Error)
-			info := &relaycommon.RelayInfo{UserId: user.Id, TokenId: token.Id, TokenKey: token.Key, TokenUnlimited: true, TokenQuotaSource: BillingSourceCheckin, TokenGroup: token.Group, UsingGroup: token.Group, RequestId: common.NewRequestId(), OriginModelName: "fixture", ChannelMeta: &relaycommon.ChannelMeta{}, CheckinMaxInputTokens: 100, CheckinMaxOutputTokens: 100, UserSetting: dto.UserSetting{BillingPreference: "subscription_only"}, PriceData: hosttypes.PriceData{UsePrice: true, ModelPrice: float64(tc.budget) / common.QuotaPerUnit, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}}}
+			info := &relaycommon.RelayInfo{UserId: user.Id, TokenId: token.Id, TokenKey: token.Key, TokenUnlimited: true, TokenQuotaSource: BillingSourceCheckin, TokenGroup: token.Group, UsingGroup: token.Group, RequestId: common.NewRequestId(), OriginModelName: "fixture", ChannelMeta: &relaycommon.ChannelMeta{}, UserSetting: dto.UserSetting{BillingPreference: "subscription_only"}, PriceData: hosttypes.PriceData{UsePrice: true, ModelPrice: float64(tc.budget) / common.QuotaPerUnit, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}}}
 			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 			ctx.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
 			apiErr := PreConsumeBilling(ctx, tc.budget, info)
@@ -123,18 +123,81 @@ func TestCheckinBillingPostgres(t *testing.T) {
 			assert.Zero(t, saved.Quota)
 		})
 	}
-	// This evaluates a maximum across token and request-priced branches, not
-	// just the sample used for ordinary input-only estimation.
-	info := &relaycommon.RelayInfo{TokenQuotaSource: BillingSourceCheckin, ChannelMeta: &relaycommon.ChannelMeta{}, CheckinMaxInputTokens: 100, CheckinMaxOutputTokens: 100, TieredBillingSnapshot: &billingexpr.BillingSnapshot{ExprString: `len < 1000 ? tier("short", fixed(0.01)) : tier("long", p*2+c*8)`, QuotaPerUnit: 500000, GroupRatio: 1}}
+	// All context tiers must be request-priced; reserve the highest fixed fee.
+	info := &relaycommon.RelayInfo{TokenQuotaSource: BillingSourceCheckin, ChannelMeta: &relaycommon.ChannelMeta{}, TieredBillingSnapshot: &billingexpr.BillingSnapshot{ExprString: `len <= 250000 ? tier("short", fixed(0.01)) : tier("long", fixed(0.02))`, QuotaPerUnit: 500000, GroupRatio: 1}}
 	budget, err := CheckinRequestBudget(info)
 	require.NoError(t, err)
-	assert.Equal(t, 5000, budget)
+	assert.Equal(t, 10000, budget)
+	for _, tc := range []struct {
+		name                string
+		input, credit, want int
+		insufficient        bool
+	}{
+		{"short context refunds one sprout", 200000, 10000, 5000, false},
+		{"boundary stays in short tier", 250000, 10000, 5000, false},
+		{"long context costs two sprouts", 250001, 10000, 10000, false},
+		{"one sprout cannot reserve highest tier", 260000, 5000, 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			user := model.User{Username: fmt.Sprintf("ct-%d", time.Now().UnixNano()), AffCode: fmt.Sprintf("ct-%d", time.Now().UnixNano()), Status: common.UserStatusEnabled, Quota: 100000000}
+			require.NoError(t, model.DB.Create(&user).Error)
+			require.NoError(t, model.DB.Create(&model.XingyaCheckinWallet{UserID: user.Id, Available: tc.credit, Granted: tc.credit}).Error)
+			requestInfo := *info
+			requestInfo.UserId, requestInfo.UserQuota = user.Id, user.Quota
+			requestInfo.RequestId, requestInfo.IsPlayground, requestInfo.TokenUnlimited = common.NewRequestId(), true, true
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			// Ignore an ordinary estimate higher than the fixed maximum.
+			apiErr := PreConsumeBilling(ctx, 20000, &requestInfo)
+			if tc.insufficient {
+				require.NotNil(t, apiErr)
+				assert.Equal(t, types.ErrorCodeInsufficientUserQuota, apiErr.GetErrorCode())
+			} else {
+				require.Nil(t, apiErr)
+				wallet, err := model.GetXingyaCheckinWallet(user.Id)
+				require.NoError(t, err)
+				assert.Equal(t, 10000, wallet.Reserved)
+				actual, err := billingexpr.ComputeTieredQuota(requestInfo.TieredBillingSnapshot, billingexpr.TokenParams{P: float64(tc.input), Len: float64(tc.input), C: 9000})
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, actual.ActualQuotaAfterGroup)
+				require.NoError(t, SettleBilling(ctx, &requestInfo, actual.ActualQuotaAfterGroup))
+			}
+			wallet, err := model.GetXingyaCheckinWallet(user.Id)
+			require.NoError(t, err)
+			assert.Equal(t, tc.credit-tc.want, wallet.Available)
+			assert.Zero(t, wallet.Reserved)
+			assert.Equal(t, tc.want, wallet.Consumed)
+			if !tc.insufficient {
+				var spend model.XingyaCheckinSpend
+				require.NoError(t, model.DB.Where("request_id = ?", requestInfo.RequestId).Take(&spend).Error)
+				assert.Zero(t, spend.UnpaidQuota)
+				assert.Equal(t, "settled", spend.State)
+			}
+			var saved model.User
+			require.NoError(t, model.DB.First(&saved, user.Id).Error)
+			assert.Equal(t, user.Quota, saved.Quota)
+		})
+	}
+	t.Run("token and mixed pricing are rejected", func(t *testing.T) {
+		_, err := CheckinRequestBudget(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}, PriceData: hosttypes.PriceData{ModelRatio: 1}})
+		require.ErrorContains(t, err, "仅支持按次")
+		mixed := *info
+		mixed.TieredBillingSnapshot = &billingexpr.BillingSnapshot{ExprString: `len <= 250000 ? tier("short", fixed(0.01)) : tier("long", p*2+c*8)`}
+		_, err = CheckinRequestBudget(&mixed)
+		require.ErrorContains(t, err, "所有档位均按次")
+	})
 	t.Run("legacy request multipliers are included before reservation", func(t *testing.T) {
-		info := &relaycommon.RelayInfo{TokenQuotaSource: BillingSourceCheckin, ChannelMeta: &relaycommon.ChannelMeta{}, CheckinMaxInputTokens: 100, CheckinMaxOutputTokens: 100, PriceData: hosttypes.PriceData{ModelRatio: 1, CompletionRatio: 1, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}}}
+		info := &relaycommon.RelayInfo{TokenQuotaSource: BillingSourceCheckin, ChannelMeta: &relaycommon.ChannelMeta{}, PriceData: hosttypes.PriceData{UsePrice: true, ModelPrice: 0.0004, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}}}
 		info.PriceData.AddOtherRatio("fixture_multiplier", 2)
 		budget, err := CheckinRequestBudget(info)
 		require.NoError(t, err)
 		assert.Equal(t, 400, budget)
+	})
+	t.Run("fractional fixed fees round exactly as settlement", func(t *testing.T) {
+		info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}, PriceData: hosttypes.PriceData{UsePrice: true, ModelPrice: 0.000003, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}}}
+		budget, err := CheckinRequestBudget(info)
+		require.NoError(t, err)
+		assert.Equal(t, 2, budget, "1.5 internal quota rounds to 2 rather than reserving 1")
 	})
 	t.Run("priced function tools cannot bypass the request budget", func(t *testing.T) {
 		settings, err := model.GetXingyaCheckinSettings()
@@ -188,25 +251,25 @@ func TestCheckinBillingPostgres(t *testing.T) {
 			common.CleanupBodyStorage(ctx)
 		}
 	})
-	t.Run("final converted payload is reserved before sending", func(t *testing.T) {
+	t.Run("fixed request fees do not depend on output limits or converted body size", func(t *testing.T) {
 		user := model.User{Username: fmt.Sprintf("co-%d", time.Now().UnixNano()), AffCode: fmt.Sprintf("co-%d", time.Now().UnixNano()), Status: common.UserStatusEnabled}
 		require.NoError(t, model.DB.Create(&user).Error)
 		require.NoError(t, model.DB.Create(&model.XingyaCheckinWallet{UserID: user.Id, Available: 2000, Granted: 2000}).Error)
-		info := &relaycommon.RelayInfo{UserId: user.Id, RequestId: common.NewRequestId(), TokenQuotaSource: BillingSourceCheckin, TokenUnlimited: true, IsPlayground: true, ChannelMeta: &relaycommon.ChannelMeta{}, CheckinMaxInputTokens: 10, CheckinMaxOutputTokens: 1, PriceData: hosttypes.PriceData{ModelRatio: 1, CompletionRatio: 1, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}}}
+		info := &relaycommon.RelayInfo{UserId: user.Id, RequestId: common.NewRequestId(), TokenQuotaSource: BillingSourceCheckin, TokenUnlimited: true, IsPlayground: true, ChannelMeta: &relaycommon.ChannelMeta{}, PriceData: hosttypes.PriceData{UsePrice: true, ModelPrice: 0.0004, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}}}
 		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 		ctx.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
 		require.Nil(t, PreConsumeBilling(ctx, 0, info))
 		body := `{"messages":[{"role":"user","content":"text"}],"max_tokens":1280}`
 		request := httptest.NewRequest("POST", "https://fixture.invalid", strings.NewReader(body))
 		request.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(body)), nil }
-		require.ErrorIs(t, ReserveCheckinOutbound(info, request), model.ErrCheckinInsufficient)
+		require.NoError(t, ReserveCheckinOutbound(info, request))
 		body = `{"messages":[{"role":"user","content":"text"}],"max_tokens":10}`
 		require.NoError(t, ReserveCheckinOutbound(info, request))
 		wallet, err := model.GetXingyaCheckinWallet(user.Id)
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, wallet.Reserved, len(body)+1024+10)
+		assert.Equal(t, 200, wallet.Reserved)
 		body = `{"input":"text"}`
-		require.Error(t, ReserveCheckinOutbound(info, request), "Codex-style dropped output limits cannot proceed")
+		require.NoError(t, ReserveCheckinOutbound(info, request), "fixed pricing does not need an output limit")
 		require.NoError(t, SettleBilling(ctx, info, 200))
 		wallet, err = model.GetXingyaCheckinWallet(user.Id)
 		require.NoError(t, err)

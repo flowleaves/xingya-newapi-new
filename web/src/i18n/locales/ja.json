@@ -4120,6 +4120,7 @@
     "Ollama": "Ollama",
     "Ollama Models": "Ollamaモデル",
     "Once both conditions are met you can claim immediately; otherwise the reward is granted automatically at local midnight.": "両方の条件を満たすとすぐに受け取れます。満たさない場合は現地時間 24:00 に自動付与されます。",
+    "Once per day, Beijing time. Check-in credit only pays for request-priced models. Context tiers reserve the highest fee and settle at the actual tier. Unsupported tools and media require a regular key. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "北京時間で1日1回。チェックイン残高はリクエスト単位の料金モデル専用です。コンテキストの段階料金は最高額を先に確保し、実際の段階で精算します。非対応のツールやメディアには通常キーを使用してください。過去の報酬は通常残高に残り、チェックイン残高の利用は招待条件に算入されません。",
     "Once per day, Beijing time. Use a check-in key with an output limit. Unsupported tools and media require a regular key. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "北京時間で1日1回受け取れます。専用キーには出力上限を設定してください。未対応のツールやメディアには通常キーを使用します。旧報酬は通常残高に残り、チェックイン残高の利用は招待条件に含まれません。",
     "One API": "1つのAPI",
     "One domain per line": "1行に1つのドメイン",

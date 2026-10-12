@@ -82,20 +82,18 @@ type TokenCountMeta struct {
 }
 
 type RelayInfo struct {
-	TokenId                int
-	TokenKey               string
-	TokenGroup             string
-	TokenQuotaSource       string
-	CheckinMaxInputTokens  float64
-	CheckinMaxOutputTokens float64
-	CheckinToolNames       []string
-	UserId                 int
-	UsingGroup             string // 使用的分组，当auto跨分组重试时，会变动
-	UserGroup              string // 用户所在分组
-	TokenUnlimited         bool
-	StartTime              time.Time
-	FirstResponseTime      time.Time
-	isFirstResponse        bool
+	TokenId           int
+	TokenKey          string
+	TokenGroup        string
+	TokenQuotaSource  string
+	CheckinToolNames  []string
+	UserId            int
+	UsingGroup        string // 使用的分组，当auto跨分组重试时，会变动
+	UserGroup         string // 用户所在分组
+	TokenUnlimited    bool
+	StartTime         time.Time
+	FirstResponseTime time.Time
+	isFirstResponse   bool
 	//SendLastReasoningResponse bool
 	IsStream               bool
 	IsGeminiBatchEmbedding bool

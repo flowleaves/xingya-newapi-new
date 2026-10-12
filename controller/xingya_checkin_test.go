@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting"
+	settingconfig "github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -166,20 +167,33 @@ func TestXingyaCheckinAPIPostgres(t *testing.T) {
 		oldTimeout := constant.StreamingTimeout
 		constant.StreamingTimeout = 30
 		oldPrices, oldCompletions := ratio_setting.ModelRatio2JSONString(), ratio_setting.CompletionRatio2JSONString()
+		oldFixedPrices := ratio_setting.ModelPrice2JSONString()
 		common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.RetryTimes = false, false, true, 1
 		t.Cleanup(func() {
 			constant.StreamingTimeout = oldTimeout
 			common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.RetryTimes = oldMemory, oldBatch, oldLogEnabled, oldRetry
 			require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(oldPrices))
+			require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(oldFixedPrices))
 			require.NoError(t, ratio_setting.UpdateCompletionRatioByJSONString(oldCompletions))
 		})
 		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"checkin-fixture-model":1}`))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"checkin-fixture-model":0.00022}`))
 		require.NoError(t, ratio_setting.UpdateCompletionRatioByJSONString(`{"checkin-fixture-model":1}`))
 		var attempts atomic.Int32
+		var tierInput atomic.Int32
+		var observedReserve atomic.Int64
 		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			attempts.Add(1)
 			raw, err := io.ReadAll(r.Body)
 			require.NoError(t, err)
+			if input := tierInput.Load(); input > 0 {
+				wallet, err := model.GetXingyaCheckinWallet(user.Id)
+				require.NoError(t, err)
+				observedReserve.Store(int64(wallet.Reserved))
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, `{"id":"tier_fixture","model":"checkin-fixture-model","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":%d,"completion_tokens":10,"total_tokens":%d}}`, input, input+10)
+				return
+			}
 			if gjson.GetBytes(raw, "model").String() == "checkin-fixture-failure" {
 				w.WriteHeader(http.StatusServiceUnavailable)
 				io.WriteString(w, `{"error":{"message":"fixture unavailable","type":"server_error"}}`)
@@ -275,12 +289,12 @@ func TestXingyaCheckinAPIPostgres(t *testing.T) {
 				body := map[string]any{"model": "checkin-fixture-model", "stream": stream}
 				charge := 110
 				if path == "/v1/responses" {
-					body["input"], body["max_output_tokens"] = "hi", 32
+					body["input"] = "hi"
 				} else if path == "/v1/embeddings" {
 					body["input"] = "hi"
-					charge = 100
+					charge = 110
 				} else {
-					body["messages"], body["max_tokens"] = []map[string]string{{"role": "user", "content": "hi"}}, 32
+					body["messages"] = []map[string]string{{"role": "user", "content": "hi"}}
 				}
 				raw, err := common.Marshal(body)
 				require.NoError(t, err)
@@ -356,6 +370,46 @@ func TestXingyaCheckinAPIPostgres(t *testing.T) {
 		require.NoError(t, model.DB.First(&saved, user.Id).Error)
 		assert.Equal(t, 90000, saved.Quota)
 		assert.Zero(t, saved.UsedQuota)
+		t.Run("context tiers reserve the maximum before upstream and settle actual input", func(t *testing.T) {
+			previous := map[string]string{}
+			require.NoError(t, settingconfig.GlobalConfig.SaveToDB(func(key, value string) error { previous[key] = value; return nil }))
+			t.Cleanup(func() { require.NoError(t, settingconfig.GlobalConfig.LoadFromDB(previous)) })
+			require.NoError(t, settingconfig.GlobalConfig.LoadFromDB(map[string]string{
+				"billing_setting.billing_mode": `{"checkin-fixture-model":"tiered_expr"}`,
+				"billing_setting.billing_expr": `{"checkin-fixture-model":"len <= 250000 ? tier(\"short\", fixed(0.01)) : tier(\"long\", fixed(0.02))"}`,
+			}))
+			require.NoError(t, model.DB.Model(&channel).Update("model_mapping", "").Error)
+			for _, tc := range []struct{ input, credit, charge, status int }{
+				{200000, 10000, 5000, http.StatusOK},
+				{250000, 10000, 5000, http.StatusOK},
+				{250001, 10000, 10000, http.StatusOK},
+				{260000, 5000, 0, http.StatusForbidden},
+			} {
+				t.Run(fmt.Sprintf("input-%d-balance-%d", tc.input, tc.credit), func(t *testing.T) {
+					require.NoError(t, model.DB.Model(&model.XingyaCheckinWallet{}).Where("user_id = ?", user.Id).Updates(map[string]any{"available": tc.credit, "reserved": 0, "granted": tc.credit, "consumed": 0}).Error)
+					tierInput.Store(int32(tc.input))
+					observedReserve.Store(0)
+					beforeAttempts := attempts.Load()
+					request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"checkin-fixture-model","messages":[{"role":"user","content":"hi"}]}`))
+					request.Header.Set("Content-Type", "application/json")
+					request.Header.Set("Authorization", "Bearer "+token.GetFullKey())
+					recorder := httptest.NewRecorder()
+					router.ServeHTTP(recorder, request)
+					require.Equal(t, tc.status, recorder.Code, recorder.Body.String())
+					if tc.status == http.StatusOK {
+						assert.Equal(t, beforeAttempts+1, attempts.Load())
+						assert.Equal(t, int64(10000), observedReserve.Load())
+					} else {
+						assert.Equal(t, beforeAttempts, attempts.Load(), "insufficient balance must not call upstream")
+					}
+					wallet, err := model.GetXingyaCheckinWallet(user.Id)
+					require.NoError(t, err)
+					assert.Equal(t, tc.credit-tc.charge, wallet.Available)
+					assert.Equal(t, tc.charge, wallet.Consumed)
+					assert.Zero(t, wallet.Reserved)
+				})
+			}
+		})
 	})
 	// Gin auth middleware is verified separately with live JWT sessions and PATs.
 	// These handler tests deliberately initialize the authorized identity.

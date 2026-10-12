@@ -4120,6 +4120,7 @@
     "Ollama": "Ollama",
     "Ollama Models": "Ollama 模型",
     "Once both conditions are met you can claim immediately; otherwise the reward is granted automatically at local midnight.": "两个条件都满足后可立即领取，否则将在当地 24:00 自动发放。",
+    "Once per day, Beijing time. Check-in credit only pays for request-priced models. Context tiers reserve the highest fee and settle at the actual tier. Unsupported tools and media require a regular key. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "每日一次，以北京时间为准。签到额度仅用于按次计费模型；上下文阶梯定价先预留最高档费用，结束后按实际档位结算并退回差额。不支持的工具与多媒体请使用普通密钥。历史奖励仍在普通余额中，签到消费不计入邀请达标。",
     "Once per day, Beijing time. Use a check-in key with an output limit. Unsupported tools and media require a regular key. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "按北京时间每日领取一次。使用签到密钥时请设置输出上限；尚未支持的工具及多媒体请切换普通密钥。旧奖励保留在普通余额中，签到消费不计入邀请达标。",
     "One API": "One API",
     "One domain per line": "每行一个域名",

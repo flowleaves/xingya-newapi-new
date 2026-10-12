@@ -256,7 +256,7 @@ export function XingyaCheckinCard(props: {
           />
           <p className='text-muted-foreground px-1 text-xs leading-relaxed'>
             {t(
-              'Once per day, Beijing time. Use a check-in key with an output limit. Unsupported tools and media require a regular key. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.'
+              'Once per day, Beijing time. Check-in credit only pays for request-priced models. Context tiers reserve the highest fee and settle at the actual tier. Unsupported tools and media require a regular key. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.'
             )}
           </p>
         </>

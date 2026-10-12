@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 	"github.com/tidwall/gjson"
 )
 
@@ -45,7 +46,7 @@ func CheckinBillingError(err error) *types.NewAPIError {
 	return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 }
 
-// PrepareCheckinRequest limits requests whose cost can be bounded before sending.
+// PrepareCheckinRequest limits requests to the supported synchronous protocols.
 // Standard local function tools are text; hosted tools and opaque remote context
 // need their own proven budget and therefore fail before any upstream request.
 func PrepareCheckinRequest(c *gin.Context, info *relaycommon.RelayInfo) error {
@@ -110,40 +111,17 @@ func PrepareCheckinRequest(c *gin.Context, info *relaycommon.RelayInfo) error {
 	if len(meta.Files) > 0 {
 		return errors.New("多媒体费用尚不支持签到额度，请切换普通密钥")
 	}
-	var maxOutput uint
 	switch request := info.Request.(type) {
 	case *dto.GeneralOpenAIRequest:
 		if request.N != nil && *request.N != 1 {
 			return errors.New("签到密钥每次仅支持一个输出")
 		}
-		if request.MaxTokens != nil {
-			maxOutput = *request.MaxTokens
-		}
-		if request.MaxCompletionTokens != nil {
-			maxOutput = max(maxOutput, *request.MaxCompletionTokens)
-		}
 	case *dto.OpenAIResponsesRequest:
-		if request.MaxOutputTokens != nil {
-			maxOutput = *request.MaxOutputTokens
-		}
 	case *dto.ClaudeRequest:
-		if request.MaxTokens != nil {
-			maxOutput = *request.MaxTokens
-		}
 	case *dto.EmbeddingRequest:
-		info.CheckinMaxInputTokens = float64(len(raw)) + 1024
-		info.CheckinMaxOutputTokens = 0
-		return nil
 	default:
 		return errors.New("此接口尚未接入签到额度，请切换普通密钥")
 	}
-	if maxOutput == 0 {
-		return errors.New("使用签到密钥请设置 max_tokens / max_completion_tokens / max_output_tokens，以便预留完整费用")
-	}
-	// The bytes already include tool schemas and role metadata. This conservative
-	// budget is independent of the operator's optional token-estimation switch.
-	info.CheckinMaxInputTokens = float64(len(raw)) + 1024
-	info.CheckinMaxOutputTokens = float64(maxOutput)
 	return nil
 }
 
@@ -210,26 +188,34 @@ func CheckinRequestBudget(info *relaycommon.RelayInfo) (int, error) {
 	p := info.PriceData
 	var cost float64
 	if snap := info.TieredBillingSnapshot; snap != nil {
-		bound, err := billingexpr.MaximumTokenCost(snap.ExprString, info.CheckinMaxInputTokens, info.CheckinMaxOutputTokens)
+		bound, err := billingexpr.MaximumFixedRequestCost(snap.ExprString)
 		if err != nil {
-			return 0, errors.New("该定价不能安全预留签到额度，请切换普通密钥")
+			return 0, errors.New("签到额度仅支持所有档位均按次计费的模型，请切换普通密钥")
 		}
 		cost = bound / 1e6 * snap.QuotaPerUnit * snap.GroupRatio
 	} else if p.UsePrice {
-		cost = p.ApplyOtherRatiosToFloat(p.ModelPrice * common.QuotaPerUnit * p.GroupRatioInfo.GroupRatio)
+		for _, value := range []float64{p.ModelPrice, common.QuotaPerUnit, p.GroupRatioInfo.GroupRatio} {
+			if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+				return 0, errors.New("签到预算无效")
+			}
+		}
+		// Match ordinary request-price settlement, including decimal rounding.
+		amount := decimal.NewFromFloat(p.ModelPrice).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).Mul(decimal.NewFromFloat(p.GroupRatioInfo.GroupRatio))
+		amount = p.ApplyOtherRatiosToDecimal(amount)
+		cost, _ = amount.Round(0).Float64()
 	} else {
-		inputRatio := max(1, p.CacheRatio, p.CacheCreationRatio, p.CacheCreation5mRatio, p.CacheCreation1hRatio, p.ImageRatio, p.AudioRatio)
-		cost = (info.CheckinMaxInputTokens*inputRatio + info.CheckinMaxOutputTokens*max(p.CompletionRatio, p.AudioCompletionRatio)) * p.ModelRatio * p.GroupRatioInfo.GroupRatio
-		cost = p.ApplyOtherRatiosToFloat(cost)
+		return 0, errors.New("签到额度仅支持按次计费的模型，请切换普通密钥")
 	}
 	if cost < 0 || math.IsNaN(cost) || math.IsInf(cost, 0) {
 		return 0, errors.New("签到预算无效")
 	}
-	return common.QuotaFromFloatStrict(math.Ceil(cost))
+	if info.TieredBillingSnapshot != nil {
+		return billingexpr.QuotaRoundStrict(cost)
+	}
+	return common.QuotaFromFloatStrict(cost)
 }
 
-// Converters can enlarge or remove output limits. Recheck the final payload
-// before the transport sends it and reserve its full budget, including retries.
+// Recheck the final payload and fixed-price reservation before each attempt.
 // Reading a replay never advances the request's actual outbound body.
 func ReserveCheckinOutbound(info *relaycommon.RelayInfo, request *http.Request) error {
 	if info.TokenQuotaSource != BillingSourceCheckin {
@@ -250,34 +236,13 @@ func ReserveCheckinOutbound(info *relaycommon.RelayInfo, request *http.Request) 
 	if !gjson.ValidBytes(raw) {
 		return errors.New("签到额度仅支持可核实的 JSON 请求")
 	}
-	payload := gjson.ParseBytes(raw)
-	budgetInfo := *info
-	if info.CheckinMaxOutputTokens > 0 {
-		var output float64
-		for _, field := range []string{"max_tokens", "max_completion_tokens", "max_output_tokens", "max_tokens_to_sample", "generationConfig.maxOutputTokens", "generation_config.max_output_tokens", "parameters.max_tokens", "parameters.max_new_tokens", "inferenceConfig.maxTokens", "textGenerationConfig.maxTokenCount", "options.num_predict", "max_gen_len"} {
-			limit := payload.Get(field)
-			if limit.Exists() {
-				value := limit.Float()
-				if limit.Type != gjson.Number || value <= 0 || value > math.MaxInt32/2 || value != math.Trunc(value) {
-					return errors.New("最终输出上限无效，请切换普通密钥")
-				}
-				output = max(output, value)
-			}
-		}
-		if output == 0 {
-			return errors.New("该渠道未保留输出上限，请切换普通密钥")
-		}
-		budgetInfo.CheckinMaxOutputTokens = max(info.CheckinMaxOutputTokens, output)
-	}
-	budgetInfo.CheckinMaxInputTokens = max(info.CheckinMaxInputTokens, float64(len(raw))+1024)
-	budget, err := CheckinRequestBudget(&budgetInfo)
+	budget, err := CheckinRequestBudget(info)
 	if err != nil {
 		return err
 	}
 	if err = info.Billing.Reserve(budget); err != nil {
 		return err
 	}
-	info.CheckinMaxInputTokens, info.CheckinMaxOutputTokens = budgetInfo.CheckinMaxInputTokens, budgetInfo.CheckinMaxOutputTokens
 	return nil
 }
 
