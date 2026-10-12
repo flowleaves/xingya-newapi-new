@@ -26,7 +26,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 
+import { formatCheckinDeadline } from '../lib/credit-expiry'
 import type { CheckinAward } from '../types'
+import { CheckinCreditAmounts } from './checkin-credit-amounts'
 
 const locales: Record<string, typeof enUS> = {
   en: enUS,
@@ -112,12 +114,36 @@ export function CheckinHistory(props: CheckinHistoryProps) {
           if (!open) setSelected(undefined)
         }}
         title={selected || t('Check-in Calendar')}
+        contentClassName='sm:max-w-md'
       >
         {record ? (
-          <div className='space-y-2'>
+          <div className='flex flex-col gap-4'>
             <p className='text-2xl font-semibold tabular-nums'>
               {formatQuotaWithCurrency(record.quota_awarded)}
             </p>
+            {record.credit && (
+              <>
+                <p className='text-muted-foreground text-xs'>
+                  {t('Expires at (Beijing time)')}:{' '}
+                  {formatCheckinDeadline(record.credit.expires_at, locale)}
+                </p>
+                <CheckinCreditAmounts credit={record.credit} />
+                {record.credit.reserved > 0 && (
+                  <p className='text-muted-foreground text-xs leading-relaxed'>
+                    {t(
+                      'Requests reserved before expiry can finish. Any unused credit returned after its deadline expires immediately.'
+                    )}
+                  </p>
+                )}
+              </>
+            )}
+            {record.opening_balance && (
+              <p className='text-muted-foreground text-xs leading-relaxed'>
+                {t(
+                  'This award predates expiry tracking. Its remaining credit is included in the pre-upgrade balance, not tracked by day.'
+                )}
+              </p>
+            )}
             <p className='text-muted-foreground text-sm'>
               {record.source === 'checkin'
                 ? t('Check-in credit')

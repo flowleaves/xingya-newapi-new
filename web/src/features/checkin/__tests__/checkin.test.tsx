@@ -41,7 +41,14 @@ function fixture(): XingyaCheckinStatus {
     today_record: { checked_in: false, quota_awarded: 0, source: '' },
     records: [],
     month_quota: 0,
-    wallet: { available: 5000, reserved: 0, granted: 5000, consumed: 0 },
+    wallet: {
+      available: 5000,
+      reserved: 0,
+      granted: 5000,
+      consumed: 0,
+      expired: 0,
+    },
+    expiry: { expiring_soon: 0, next_expires_at: 0, next_expiring_quota: 0 },
     claim_enabled: true,
     spend_enabled: true,
     min_reward: 1,
@@ -174,6 +181,11 @@ test('paused claims retain the balance, history and exact model-group link', asy
   ).toBeDisabled()
   expect(screen.getByText('Check-in Calendar')).toBeVisible()
   expect(
+    screen.getByText(
+      'Check-in spending is paused. Existing credit still expires on its original date.'
+    )
+  ).toBeVisible()
+  expect(
     screen.getByRole('button', { name: 'View available models' })
   ).toHaveAttribute('href', '/pricing?group=checkin-fixture')
 })
@@ -287,6 +299,7 @@ test('loaded settings populate the form and a complete save uses the newest revi
   expect(
     screen.getByRole('switch', { name: 'Allow daily claims' })
   ).toBeChecked()
+  expect(screen.getByText('Credit validity · fixed 30 days')).toBeVisible()
   const user = userEvent.setup()
   await user.clear(minimum)
   await user.type(minimum, '1.5')
@@ -302,4 +315,60 @@ test('loaded settings populate the form and a complete save uses the newest revi
     expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled()
   )
   expect(minimum).toHaveValue(1.5)
+})
+
+test('the shared card shows upcoming expiry and opens reconciled totals with the opening deadline', async () => {
+  const data = fixture()
+  const expires = Date.parse('2026-11-01T02:03:04Z') / 1000
+  data.wallet = {
+    available: 5000,
+    reserved: 1000,
+    consumed: 2000,
+    expired: 3000,
+    granted: 11000,
+  }
+  data.expiry = {
+    expiring_soon: 5000,
+    next_expires_at: expires,
+    next_expiring_quota: 5000,
+    opening: { ...data.wallet, source: 'opening', expires_at: expires },
+  }
+  vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+    data: { success: true, data: url === '/api/status' ? {} : data },
+  }))
+  await renderCards()
+  expect(screen.getByText(/Expiring within 7 days/)).toBeVisible()
+  expect(
+    screen.getByText(/Next expiry \(Beijing time\).*10:03:04/)
+  ).toBeVisible()
+  expect(screen.queryByText('Expired check-in credit')).not.toBeInTheDocument()
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: 'Credit details' }))
+  const dialog = await screen.findByRole('dialog', {
+    name: 'Check-in credit details',
+  })
+  expect(
+    within(dialog).getByText('Total check-in credit awarded')
+  ).toBeVisible()
+  expect(within(dialog).getAllByText('Expired check-in credit')).toHaveLength(2)
+  expect(within(dialog).getByText('Pre-upgrade check-in credit')).toBeVisible()
+  expect(
+    within(dialog).getByText(/Expires at \(Beijing time\).*10:03:04/)
+  ).toBeVisible()
+  await user.keyboard('{Escape}')
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  expect(screen.getByRole('button', { name: 'Credit details' })).toHaveFocus()
+})
+
+test('a wallet without available expiring lots does not display a false expiry reminder', async () => {
+  vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+    data: { success: true, data: url === '/api/status' ? {} : fixture() },
+  }))
+  await renderCards()
+  expect(screen.queryByText(/Expiring within 7 days/)).not.toBeInTheDocument()
+  expect(
+    screen.queryByText(/Next expiry \(Beijing time\)/)
+  ).not.toBeInTheDocument()
 })

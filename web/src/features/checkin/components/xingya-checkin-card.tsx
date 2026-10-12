@@ -24,6 +24,7 @@ import { useTranslation } from 'react-i18next'
 import { Dialog } from '@/components/dialog'
 import { ErrorState } from '@/components/error-state'
 import { Turnstile } from '@/components/turnstile'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -35,7 +36,9 @@ import { formatNumber } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import { useCheckin } from '../hooks/use-checkin'
+import { formatCheckinDeadline } from '../lib/credit-expiry'
 import type { CheckinKeyResult } from '../types'
+import { CheckinCreditAmounts } from './checkin-credit-amounts'
 import { CheckinHistory } from './checkin-history'
 import { CheckinKeyDialog } from './checkin-key-dialog'
 
@@ -50,6 +53,7 @@ export function XingyaCheckinCard(props: {
   const [challenge, setChallenge] = useState(false)
   const [challengeKey, setChallengeKey] = useState(0)
   const [keyResult, setKeyResult] = useState<CheckinKeyResult>()
+  const [creditDetails, setCreditDetails] = useState(false)
   const checkin = useCheckin(month)
   async function claim(token?: string) {
     try {
@@ -178,7 +182,7 @@ export function XingyaCheckinCard(props: {
             {!data.spend_enabled && (
               <p className='text-warning text-sm'>
                 {t(
-                  'Check-in spending is paused. Your credit and history are retained.'
+                  'Check-in spending is paused. Existing credit still expires on its original date.'
                 )}
               </p>
             )}
@@ -187,6 +191,34 @@ export function XingyaCheckinCard(props: {
                 'Separate credit · fixed group · no self-refund or regular-balance fallback'
               )}
             </p>
+            <p className='text-muted-foreground text-xs leading-relaxed'>
+              {t(
+                'Each award is valid for 30 days. Credit expiring first is used first.'
+              )}
+            </p>
+            {data.expiry.next_expires_at > 0 && (
+              <Alert className='border-warning/25 bg-warning/5 p-3'>
+                {data.expiry.expiring_soon > 0 && (
+                  <AlertTitle className='text-xs leading-relaxed'>
+                    {t('Expiring within 7 days')}:{' '}
+                    {formatQuotaWithCurrency(data.expiry.expiring_soon)}
+                  </AlertTitle>
+                )}
+                <AlertDescription className='text-xs leading-relaxed'>
+                  {t('Next expiry (Beijing time)')}:{' '}
+                  {formatCheckinDeadline(data.expiry.next_expires_at, locale)}
+                  {' · '}
+                  {formatQuotaWithCurrency(data.expiry.next_expiring_quota)}
+                </AlertDescription>
+              </Alert>
+            )}
+            <Button
+              variant='link'
+              className='h-auto min-h-11 px-0 text-xs'
+              onClick={() => setCreditDetails(true)}
+            >
+              {t('Credit details')}
+            </Button>
             <div className='grid gap-2 sm:grid-cols-2'>
               <Button
                 variant='outline'
@@ -261,6 +293,47 @@ export function XingyaCheckinCard(props: {
           </p>
         </>
       )}
+      <Dialog
+        open={creditDetails}
+        onOpenChange={setCreditDetails}
+        title={t('Check-in credit details')}
+        description={t(
+          'Each award is valid for 30 days. Credit expiring first is used first.'
+        )}
+        contentClassName='sm:max-w-md'
+      >
+        <div className='flex flex-col gap-4'>
+          <div>
+            <p className='text-muted-foreground text-xs'>
+              {t('Total check-in credit awarded')}
+            </p>
+            <p className='mt-1 text-2xl font-semibold break-all tabular-nums'>
+              {formatQuotaWithCurrency(data.wallet.granted)}
+            </p>
+          </div>
+          <CheckinCreditAmounts credit={data.wallet} />
+          <p className='text-muted-foreground text-xs leading-relaxed'>
+            {t(
+              'Requests reserved before expiry can finish. Any unused credit returned after its deadline expires immediately.'
+            )}
+          </p>
+          {data.expiry.opening && (
+            <div className='bg-muted flex flex-col gap-2 rounded-lg p-3 text-xs leading-relaxed'>
+              <p className='font-medium'>{t('Pre-upgrade check-in credit')}</p>
+              <p className='text-muted-foreground'>
+                {t(
+                  'Pre-upgrade credit received a one-time 30-day grace period. Later check-ins do not extend it.'
+                )}
+              </p>
+              <p>
+                {t('Expires at (Beijing time)')}:{' '}
+                {formatCheckinDeadline(data.expiry.opening.expires_at, locale)}
+              </p>
+              <CheckinCreditAmounts credit={data.expiry.opening} />
+            </div>
+          )}
+        </div>
+      </Dialog>
       <Dialog
         open={challenge}
         onOpenChange={setChallenge}

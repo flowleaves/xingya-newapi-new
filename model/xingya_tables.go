@@ -33,6 +33,8 @@ func InitXingyaTables(db *gorm.DB) error {
 		&XingyaCheckinWallet{},
 		&XingyaCheckinGrant{},
 		&XingyaCheckinSpend{},
+		&XingyaCheckinCreditLot{},
+		&XingyaCheckinAllocation{},
 	} {
 		if db.Migrator().HasTable(table) {
 			continue
@@ -44,14 +46,26 @@ func InitXingyaTables(db *gorm.DB) error {
 	if err := migrateXingyaTables(db); err != nil {
 		return err
 	}
+	if err := migrateInviteSpend080(db); err != nil {
+		return err
+	}
+	if err := migrateCheckinCreditExpiry(db, 0); err != nil {
+		return err
+	}
 	xingyaTablesReady.Store(true)
-	return migrateInviteSpend080(db)
+	return nil
 }
 
 // migrateXingyaTables performs additive upgrades for existing Xingya-owned tables.
 // GORM's migrator keeps the same column/index operations valid on PostgreSQL, MySQL,
 // and SQLite; the global upstream migration list deliberately does not own these tables.
 func migrateXingyaTables(db *gorm.DB) error {
+	wallet := &XingyaCheckinWallet{}
+	if !db.Migrator().HasColumn(wallet, "Expired") {
+		if err := db.Migrator().AddColumn(wallet, "Expired"); err != nil {
+			return err
+		}
+	}
 	reward := &XingyaInviteRewardPending{}
 	for _, column := range []string{"QualifyingCalls", "QualifyingQuota", "EligibleAt", "AutoGrantAt", "GrantMethod"} {
 		if db.Migrator().HasColumn(reward, column) {

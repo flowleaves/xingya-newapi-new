@@ -113,6 +113,14 @@ export function XingyaCheckinSettingsSection() {
           'Random daily credit is separate from the legacy A/B/C rules. Create the group normally, then select it here. After the first award, the group cannot be replaced.'
         )}
       </p>
+      <div className='bg-muted flex flex-col gap-1 rounded-lg p-4 text-sm'>
+        <p className='font-medium'>{t('Credit validity · fixed 30 days')}</p>
+        <p className='text-muted-foreground'>
+          {t(
+            'Each award expires 30 × 24 hours after receipt. New check-ins do not renew old credit, and pausing claims or spending does not pause expiry.'
+          )}
+        </p>
+      </div>
       <Form {...form}>
         <SettingsForm>
           <FormField
@@ -187,7 +195,7 @@ export function XingyaCheckinSettingsSection() {
                   <FormLabel>{t('Allow check-in spending')}</FormLabel>
                   <FormDescription>
                     {t(
-                      'Turning this off blocks new requests and retains balances and history.'
+                      'Turning this off blocks new requests. Existing credit still expires on its original date; history is retained.'
                     )}
                   </FormDescription>
                 </div>

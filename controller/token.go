@@ -215,7 +215,7 @@ func GetTokenStatus(c *gin.Context) {
 	}
 	expiredAt := token.ExpiredTime
 	available := token.RemainQuota
-	granted, used, reserved := token.RemainQuota, 0, 0
+	granted, used, reserved, expired := token.RemainQuota, 0, 0, 0
 	if token.QuotaSource == model.CheckinQuotaSource {
 		wallet, walletErr := model.GetXingyaCheckinWallet(userId)
 		if walletErr != nil {
@@ -227,6 +227,7 @@ func GetTokenStatus(c *gin.Context) {
 			available = min(available, max(0, token.RemainQuota))
 		}
 		granted, used, reserved = wallet.Granted, wallet.Consumed, wallet.Reserved
+		expired = wallet.Expired
 	}
 	if expiredAt == -1 {
 		expiredAt = 0
@@ -237,6 +238,7 @@ func GetTokenStatus(c *gin.Context) {
 		"total_used":      used,
 		"total_available": available,
 		"total_reserved":  reserved,
+		"total_expired":   expired,
 		"quota_source":    token.QuotaSource,
 		"expires_at":      expiredAt * 1000,
 	})
@@ -272,6 +274,7 @@ func GetTokenUsage(c *gin.Context) {
 	expiredAt := token.ExpiredTime
 	available := token.RemainQuota
 	granted, used, reserved, unlimited := token.RemainQuota+token.UsedQuota, token.UsedQuota, 0, token.UnlimitedQuota
+	expired := 0
 	if token.QuotaSource == model.CheckinQuotaSource {
 		wallet, walletErr := model.GetXingyaCheckinWallet(token.UserId)
 		if walletErr != nil {
@@ -283,6 +286,7 @@ func GetTokenUsage(c *gin.Context) {
 			available = min(available, max(0, token.RemainQuota))
 		}
 		granted, used, reserved, unlimited = wallet.Granted, wallet.Consumed, wallet.Reserved, false
+		expired = wallet.Expired
 	}
 	if expiredAt == -1 {
 		expiredAt = 0
@@ -298,6 +302,7 @@ func GetTokenUsage(c *gin.Context) {
 			"total_used":           used,
 			"total_available":      available,
 			"total_reserved":       reserved,
+			"total_expired":        expired,
 			"quota_source":         token.QuotaSource,
 			"unlimited_quota":      unlimited,
 			"key_unlimited_quota":  token.UnlimitedQuota,

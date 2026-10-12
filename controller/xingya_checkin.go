@@ -28,7 +28,7 @@ func GetXingyaCheckinStatus(c *gin.Context) {
 		return
 	}
 	userID := c.GetInt("id")
-	wallet, err := model.GetXingyaCheckinWallet(userID)
+	balance, err := model.GetXingyaCheckinBalance(userID)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -41,8 +41,29 @@ func GetXingyaCheckinStatus(c *gin.Context) {
 		return
 	}
 	monthQuota := 0
+	grantIDs := make([]int, 0, len(grants))
 	for _, grant := range grants {
-		records = append(records, gin.H{"checkin_date": grant.CheckinDate, "quota_awarded": grant.QuotaAwarded, "source": "checkin"})
+		grantIDs = append(grantIDs, grant.ID)
+	}
+	lotsByGrant := make(map[int]model.XingyaCheckinCreditLot, len(grants))
+	if len(grantIDs) > 0 {
+		var lots []model.XingyaCheckinCreditLot
+		if err = model.DB.Where("user_id = ? AND grant_id IN ?", userID, grantIDs).Find(&lots).Error; err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		for _, lot := range lots {
+			lotsByGrant[lot.GrantID] = lot
+		}
+	}
+	for _, grant := range grants {
+		record := gin.H{"checkin_date": grant.CheckinDate, "quota_awarded": grant.QuotaAwarded, "source": "checkin"}
+		if lot, ok := lotsByGrant[grant.ID]; ok {
+			record["credit"] = lot
+		} else {
+			record["opening_balance"] = true
+		}
+		records = append(records, record)
 		monthQuota += grant.QuotaAwarded
 	}
 	var legacy []model.Checkin
@@ -83,7 +104,7 @@ func GetXingyaCheckinStatus(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, gin.H{"today": today, "today_record": todayRecord, "month": month, "records": records, "month_quota": monthQuota, "wallet": wallet,
+	common.ApiSuccess(c, gin.H{"today": today, "today_record": todayRecord, "month": month, "records": records, "month_quota": monthQuota, "wallet": balance.Wallet, "expiry": balance.Expiry,
 		"claim_enabled": s.ClaimEnabled, "spend_enabled": s.SpendEnabled, "min_reward": s.MinReward, "max_reward": s.MaxReward, "group": s.Group,
 		"group_accessible": service.IsUserSelectableGroup(group, s.Group), "pending_review": pending})
 }
@@ -103,7 +124,7 @@ func ClaimXingyaDailyCredit(c *gin.Context) {
 		common.ApiErrorMsg(c, "当前账号暂不能使用签到分组")
 		return
 	}
-	grant, already, err := model.ClaimXingyaCheckin(c.GetInt("id"), time.Now())
+	grant, already, err := model.ClaimXingyaCheckin(c.GetInt("id"), time.Time{})
 	if err != nil {
 		common.ApiError(c, err)
 		return

@@ -18,10 +18,25 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { ApiKey } from '@/features/keys/types'
 
+export interface CheckinCreditAmounts {
+  available: number
+  reserved: number
+  consumed: number
+  expired: number
+}
+
+export interface CheckinCreditLot extends CheckinCreditAmounts {
+  source: 'grant' | 'opening'
+  granted: number
+  expires_at: number
+}
+
 export interface CheckinAward {
   checkin_date: string
   quota_awarded: number
   source: 'checkin' | 'legacy'
+  credit?: CheckinCreditLot
+  opening_balance?: boolean
 }
 
 export interface XingyaCheckinStatus {
@@ -30,11 +45,14 @@ export interface XingyaCheckinStatus {
   month: string
   records: CheckinAward[]
   month_quota: number
-  wallet: {
-    available: number
-    reserved: number
+  wallet: CheckinCreditAmounts & {
     granted: number
-    consumed: number
+  }
+  expiry: {
+    expiring_soon: number
+    next_expires_at: number
+    next_expiring_quota: number
+    opening?: CheckinCreditLot
   }
   claim_enabled: boolean
   spend_enabled: boolean

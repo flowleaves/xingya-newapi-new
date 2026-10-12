@@ -56,6 +56,10 @@ func TestCheckinBillingPostgres(t *testing.T) {
 	require.NoError(t, model.DB.AutoMigrate(&model.Option{}, &model.User{}, &model.Token{}, &model.Channel{}))
 	require.NoError(t, model.LOG_DB.AutoMigrate(&model.Log{}))
 	require.NoError(t, model.InitXingyaTables(model.DB))
+	credit := func(userID, amount int) {
+		require.NoError(t, model.DB.Create(&model.XingyaCheckinWallet{UserID: userID, Available: amount, Granted: amount}).Error)
+		require.NoError(t, model.DB.Create(&model.XingyaCheckinCreditLot{UserID: userID, Source: "opening", SourceKey: fmt.Sprintf("fixture:%d", userID), Granted: amount, Available: amount, CreatedAt: common.GetTimestamp(), ExpiresAt: time.Now().Add(model.CheckinCreditLifetime).Unix()}).Error)
+	}
 	for _, tc := range []struct {
 		name                   string
 		actual, budget, credit int
@@ -72,7 +76,7 @@ func TestCheckinBillingPostgres(t *testing.T) {
 			require.NoError(t, model.DB.Create(&user).Error)
 			token := model.Token{UserId: user.Id, Key: common.NewRequestId(), Status: common.TokenStatusEnabled, ExpiredTime: -1, UnlimitedQuota: true, QuotaSource: model.CheckinQuotaSource, Group: "checkin-fixture"}
 			require.NoError(t, model.DB.Create(&token).Error)
-			require.NoError(t, model.DB.Create(&model.XingyaCheckinWallet{UserID: user.Id, Available: tc.credit, Granted: tc.credit}).Error)
+			credit(user.Id, tc.credit)
 			info := &relaycommon.RelayInfo{UserId: user.Id, TokenId: token.Id, TokenKey: token.Key, TokenUnlimited: true, TokenQuotaSource: BillingSourceCheckin, TokenGroup: token.Group, UsingGroup: token.Group, RequestId: common.NewRequestId(), OriginModelName: "fixture", ChannelMeta: &relaycommon.ChannelMeta{}, UserSetting: dto.UserSetting{BillingPreference: "subscription_only"}, PriceData: hosttypes.PriceData{UsePrice: true, ModelPrice: float64(tc.budget) / common.QuotaPerUnit, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}}}
 			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 			ctx.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
@@ -141,7 +145,7 @@ func TestCheckinBillingPostgres(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			user := model.User{Username: fmt.Sprintf("ct-%d", time.Now().UnixNano()), AffCode: fmt.Sprintf("ct-%d", time.Now().UnixNano()), Status: common.UserStatusEnabled, Quota: 100000000}
 			require.NoError(t, model.DB.Create(&user).Error)
-			require.NoError(t, model.DB.Create(&model.XingyaCheckinWallet{UserID: user.Id, Available: tc.credit, Granted: tc.credit}).Error)
+			credit(user.Id, tc.credit)
 			requestInfo := *info
 			requestInfo.UserId, requestInfo.UserQuota = user.Id, user.Quota
 			requestInfo.RequestId, requestInfo.IsPlayground, requestInfo.TokenUnlimited = common.NewRequestId(), true, true
@@ -254,7 +258,7 @@ func TestCheckinBillingPostgres(t *testing.T) {
 	t.Run("fixed request fees do not depend on output limits or converted body size", func(t *testing.T) {
 		user := model.User{Username: fmt.Sprintf("co-%d", time.Now().UnixNano()), AffCode: fmt.Sprintf("co-%d", time.Now().UnixNano()), Status: common.UserStatusEnabled}
 		require.NoError(t, model.DB.Create(&user).Error)
-		require.NoError(t, model.DB.Create(&model.XingyaCheckinWallet{UserID: user.Id, Available: 2000, Granted: 2000}).Error)
+		credit(user.Id, 2000)
 		info := &relaycommon.RelayInfo{UserId: user.Id, RequestId: common.NewRequestId(), TokenQuotaSource: BillingSourceCheckin, TokenUnlimited: true, IsPlayground: true, ChannelMeta: &relaycommon.ChannelMeta{}, PriceData: hosttypes.PriceData{UsePrice: true, ModelPrice: 0.0004, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}}}
 		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 		ctx.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
