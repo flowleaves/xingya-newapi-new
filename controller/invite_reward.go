@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
@@ -143,7 +142,7 @@ func AdminListRegistrationRisk(c *gin.Context) {
 	}
 	pageInfo := common.GetPageQuery(c)
 	if pageInfo.Page < 1 || pageInfo.PageSize < 1 || pageInfo.Page > int(^uint(0)>>1)/pageInfo.PageSize {
-		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
 	groups, total, err := model.GetRegistrationRiskGroups(from, to, minRepeats, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
@@ -201,7 +200,7 @@ func AdminListRegistrationDevices(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	// GetPageQuery has legacy negative-value behavior; do not permit an unbounded list.
 	if pageInfo.Page < 1 || pageInfo.PageSize < 1 || pageInfo.Page > int(^uint(0)>>1)/pageInfo.PageSize {
-		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
 	items, total, err := model.GetRegistrationDevices(from, to, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
@@ -222,7 +221,7 @@ func AdminGetRegistrationDevice(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	userId, err := strconv.Atoi(c.Param("id"))
 	if err != nil || userId <= 0 {
-		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
 

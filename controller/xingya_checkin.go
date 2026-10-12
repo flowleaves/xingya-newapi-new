@@ -134,7 +134,7 @@ func ClaimXingyaDailyCredit(c *gin.Context) {
 		source = "legacy"
 	}
 	if !already {
-		model.RecordLog(c.GetInt("id"), model.LogTypeSystem, "星芽签到专用额度已入账")
+		model.RecordLog(c.GetInt("id"), model.LogTypeSystem, common.NewMessage("Check-in credit granted"))
 	}
 	common.ApiSuccess(c, gin.H{"checkin_date": grant.CheckinDate, "quota_awarded": grant.QuotaAwarded, "source": source, "already_claimed": already})
 }

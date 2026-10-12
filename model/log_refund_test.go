@@ -576,12 +576,13 @@ func TestSelfRefundNeverRewritesSourceLog(t *testing.T) {
 	prepareRefundFixture(t)
 
 	for _, testCase := range []struct {
-		name  string
-		other string
+		name          string
+		other         string
+		invalidSource bool
 	}{
-		{"json object", `{"request_path":"/v1/chat/completions","billing_source":"wallet"}`},
-		{"empty string", ""},
-		{"json array", `[]`},
+		{"json object", `{"request_path":"/v1/chat/completions","billing_source":"wallet"}`, false},
+		{"empty string", "", false},
+		{"json array", `[]`, true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			user := newRefundUser(t, "src-"+testCase.name, 1000)
@@ -595,7 +596,15 @@ func TestSelfRefundNeverRewritesSourceLog(t *testing.T) {
 			var before Log
 			require.NoError(t, LOG_DB.First(&before, log.Id).Error)
 
-			require.NoError(t, DoSelfRefundWallet(user.Id, log.Id, 500, 250, "empty_response", log.RequestId, RefundLimits{MaxCount: 1}))
+			err := DoSelfRefundWallet(user.Id, log.Id, 500, 250, "empty_response", log.RequestId, RefundLimits{MaxCount: 1})
+			if testCase.invalidSource {
+				require.Error(t, err)
+				var afterUser User
+				require.NoError(t, DB.First(&afterUser, user.Id).Error)
+				require.Equal(t, 1000, afterUser.Quota)
+			} else {
+				require.NoError(t, err)
+			}
 
 			var after Log
 			require.NoError(t, LOG_DB.First(&after, log.Id).Error)

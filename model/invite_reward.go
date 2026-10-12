@@ -450,9 +450,9 @@ func RecordInviteRewardLogs(rewardId int) {
 		return
 	}
 	if reward.InviteeQuota > 0 {
-		RecordLog(reward.InviteeId, LogTypeSystem, "使用邀请码赠送 "+logger.LogQuota(reward.InviteeQuota))
+		RecordLog(reward.InviteeId, LogTypeSystem, common.NewMessage("Invitation code bonus {{quota}}", map[string]any{"quota": logger.FormatQuota(reward.InviteeQuota)}))
 	}
 	if reward.InviterQuota > 0 {
-		RecordLog(reward.InviterId, LogTypeSystem, "邀请奖励发放 "+logger.LogQuota(reward.InviterQuota))
+		RecordLog(reward.InviterId, LogTypeSystem, common.NewMessage("Bonus for inviting a user {{quota}}", map[string]any{"quota": logger.FormatQuota(reward.InviterQuota)}))
 	}
 }

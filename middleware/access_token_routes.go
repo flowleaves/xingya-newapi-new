@@ -132,6 +132,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"DELETE /api/user/:id/2fa":                         accessTokenScopeRule("user:write"),
 	"GET /api/user/invite_rewards/":                    accessTokenScopeRule("user:read"),
 	"GET /api/user/registration_devices/risk":          accessTokenScopeRule("user:read"),
+	"GET /api/user/registration_devices":               accessTokenScopeRule("user:read"),
 	"GET /api/user/:id/registration":                   accessTokenScopeRule("user:read"),
 
 	// router/api-router.go: /api/subscription
@@ -258,6 +259,8 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	// restores subscription allowance, so it takes the wallet write scope.
 	"GET /api/log/self/refundable": accessTokenScopeRule("usage:read"),
 	"POST /api/log/self/refund":    accessTokenScopeRule("wallet:write"),
+	"GET /api/log/export":          accessTokenScopeRule("log:read"),
+	"GET /api/log/self/export":     accessTokenScopeRule("usage:read"),
 	"GET /api/data/":               accessTokenScopeRule("log:read"),
 	"GET /api/data/users":          accessTokenScopeRule("log:read"),
 	"GET /api/data/self":           accessTokenScopeRule("usage:read"),

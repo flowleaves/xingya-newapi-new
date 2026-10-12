@@ -23,10 +23,7 @@ func GetCheckinStatus(c *gin.Context) {
 
 	stats, err := model.GetUserCheckinStats(userId, month)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiError(c, err)
 		return
 	}
 
@@ -37,10 +34,7 @@ func GetCheckinStatus(c *gin.Context) {
 	// 历史累计消耗（复用钱包 used_quota，含订阅，供规则 C 判定与前端展示）
 	totalUsedQuota, err := model.GetUserUsedQuota(userId)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiError(c, err)
 		return
 	}
 
