@@ -167,6 +167,24 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 		service.AppendUsedChannel(c, channel.Id)
+		if relayInfo.TokenQuotaSource == service.BillingSourceCheckin {
+			relayInfo.InitChannelMeta(c)
+			if err := helper.ModelMappedHelper(c, relayInfo, nil); err != nil {
+				newAPIError = service.CheckinBillingError(err)
+				break
+			}
+			if relayInfo.UsingGroup != relayInfo.TokenGroup {
+				newAPIError = service.CheckinBillingError(errors.New("签到密钥不能更换分组"))
+				break
+			}
+			if budget, err := service.CheckinRequestBudget(relayInfo); err != nil {
+				newAPIError = service.CheckinBillingError(err)
+				break
+			} else if err = relayInfo.Billing.Reserve(budget); err != nil {
+				newAPIError = service.CheckinBillingError(err)
+				break
+			}
+		}
 		if billingErr := service.PrepareTieredBillingForSelectedGroup(c, relayInfo); billingErr != nil {
 			newAPIError = billingErr
 			break

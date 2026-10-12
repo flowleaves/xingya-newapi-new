@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
 import type { TFunction } from 'i18next'
 /*
 Copyright (C) 2023-2026 QuantumNous
@@ -50,7 +51,9 @@ import {
   Info,
   LogIn,
 } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { Dialog } from '@/components/dialog'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
@@ -65,12 +68,8 @@ import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { formatBillingCurrencyFromUSD } from '@/lib/currency'
 import { formatLogQuota, formatTokens, formatUseTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
-import { toast } from 'sonner'
 
 import { getRefundable, postRefund } from '../../api'
-
 import { AuditDetailFields } from '../../audit/components/audit-detail-fields'
 import type { UsageLog } from '../../data/schema'
 import {
@@ -491,6 +490,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const isTopup = props.log.type === 1
   const isManage = props.log.type === 3
   const isSubscription = other?.billing_source === 'subscription'
+  const isCheckin = other?.billing_source === 'checkin'
   const isTieredBilling =
     isConsume &&
     !isViolation &&
@@ -1265,12 +1265,27 @@ export function DetailsDialog(props: DetailsDialogProps) {
             refundable (already refunded, outside the window, disabled, ...). */}
         {isConsume &&
           !isViolation &&
+          !isCheckin &&
           props.log.request_id !== '' &&
           (props.log.completion_tokens === 0 ||
             (other?.stream_status?.end_reason !== undefined &&
               TRUNCATING_STREAM_END_REASONS.has(
                 other.stream_status.end_reason
               ))) && <SelfRefundCard requestId={props.log.request_id} />}
+
+        {isCheckin && other && (
+          <DetailSection label={t('Check-in credit')}>
+            <DetailRow
+              label={t('Check-in credit consumed')}
+              value={formatLogQuota(other.checkin_consumed ?? props.log.quota)}
+            />
+            <p className='text-muted-foreground text-xs leading-relaxed'>
+              {t(
+                'Check-in credit is separate from your regular balance and is not eligible for self-refund or invite rewards.'
+              )}
+            </p>
+          </DetailSection>
+        )}
 
         {/* Subscription billing details */}
         {isSubscription && other && (

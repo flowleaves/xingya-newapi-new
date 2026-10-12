@@ -107,7 +107,14 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
         accessorKey: 'name',
         header: t('Name'),
         cell: ({ row }) => (
-          <span className='font-medium'>{row.getValue('name')}</span>
+          <span className='font-medium'>
+            {row.getValue('name')}
+            {row.original.quota_source === 'checkin' && (
+              <span className='text-primary mt-1 block text-xs'>
+                {t('Check-in credit')}
+              </span>
+            )}
+          </span>
         ),
         size: 180,
         meta: { mobileTitle: true },

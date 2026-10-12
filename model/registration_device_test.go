@@ -274,6 +274,7 @@ func TestRecordRegistrationDeviceStoresTheNetworkAndTheNormalizedAgent(t *testin
 	device, err := GetRegistrationDevice(user.Id)
 	require.NoError(t, err)
 	assert.Equal(t, "203.0.113.0/24", device.IpPrefix)
+	assert.Equal(t, "203.0.113.10", device.ClientIP)
 	// The raw agent is still stored verbatim for review; only the comparison is normalized.
 	assert.Equal(t, testChromeUserAgent, device.UserAgent)
 	assert.Equal(t, common.GenerateHMAC(registrationUserAgentBucket(testChromeUserAgent)), device.UaBucketHash)
@@ -519,7 +520,7 @@ func TestRecordRegistrationDeviceIsIdempotentPerUser(t *testing.T) {
 	assert.EqualValues(t, 1, count)
 }
 
-func TestGetRegistrationRiskGroupsReturnsDuplicateAccountsWithoutRawIP(t *testing.T) {
+func TestGetRegistrationRiskGroupsReturnsDuplicateAccountsWithExactIP(t *testing.T) {
 	setupRegistrationDeviceTestState(t, true)
 	first := seedRegistrationDevice(t, "203.0.113.40", testChromeUserAgent, 60)
 	second := seedRegistrationDevice(t, "203.0.113.40", testChromeUserAgent, 30)
@@ -530,6 +531,7 @@ func TestGetRegistrationRiskGroupsReturnsDuplicateAccountsWithoutRawIP(t *testin
 	assert.EqualValues(t, 1, total)
 	require.Len(t, groups, 1)
 	assert.EqualValues(t, 2, groups[0].RepeatCount)
+	assert.Equal(t, "203.0.113.40", groups[0].ClientIP)
 	assert.NotContains(t, groups[0].IPFingerprint, "203.0.113.40")
 	assert.NotContains(t, groups[0].IPFingerprint, "not-an-address")
 	require.Len(t, groups[0].Registrations, 2)
@@ -562,6 +564,19 @@ func TestGetRegistrationRiskGroupsPaginatesGroupsBeforeLoadingRegistrations(t *t
 		groups[0].Registrations[0].UserId,
 		groups[0].Registrations[1].UserId,
 	})
+
+	// Same-second groups must not be repeated or skipped when changing pages.
+	require.NoError(t, DB.Model(&XingyaRegistrationDevice{}).Where("user_id IN ?", []int{firstGroupFirst, firstGroupSecond, secondGroupFirst, secondGroupSecond}).Update("reg_time", now).Error)
+	firstPage, _, err := GetRegistrationRiskGroups(now, now, 2, 0, 1)
+	require.NoError(t, err)
+	secondPage, _, err := GetRegistrationRiskGroups(now, now, 2, 1, 1)
+	require.NoError(t, err)
+	require.Len(t, firstPage, 1)
+	require.Len(t, secondPage, 1)
+	assert.NotEqual(t, firstPage[0].IPFingerprint, secondPage[0].IPFingerprint)
+	repeatedPage, _, err := GetRegistrationRiskGroups(now, now, 2, 0, 1)
+	require.NoError(t, err)
+	assert.Equal(t, firstPage, repeatedPage)
 }
 
 // The normalized digest was added after the table shipped, so the upgrade has to extend a
@@ -595,11 +610,13 @@ func TestMigrationAddsTheNormalizedDigestToAPopulatedLegacyTable(t *testing.T) {
 
 	require.NoError(t, InitXingyaTables(DB))
 	assert.True(t, DB.Migrator().HasColumn(&XingyaRegistrationDevice{}, "UaBucketHash"))
+	assert.True(t, DB.Migrator().HasColumn(&XingyaRegistrationDevice{}, "ClientIP"))
 
 	var legacy XingyaRegistrationDevice
 	require.NoError(t, DB.Where("user_id = ?", 77).First(&legacy).Error)
 	assert.Equal(t, "legacy-agent", legacy.UserAgent, "the upgrade must preserve existing rows")
 	assert.Empty(t, legacy.UaBucketHash, "a row predating the digest carries no normalized value")
+	assert.Empty(t, legacy.ClientIP, "historical exact addresses cannot be reconstructed")
 
 	// Startup runs this on every boot, so a second pass must be a no-op.
 	require.NoError(t, InitXingyaTables(DB))
@@ -612,6 +629,83 @@ func TestMigrationAddsTheNormalizedDigestToAPopulatedLegacyTable(t *testing.T) {
 	var afterRestart XingyaRegistrationDevice
 	require.NoError(t, DB.Where("user_id = ?", 77).First(&afterRestart).Error)
 	assert.Equal(t, legacy, afterRestart, "repeated startup and duplicate writes must preserve legacy data")
+}
+
+func TestRegistrationAuditStoresNormalizedIPAndKeepsOriginalOnRetry(t *testing.T) {
+	setupRegistrationDeviceTestState(t, true)
+	for _, test := range []struct{ address, expected string }{
+		{"203.0.113.10:443", "203.0.113.10"},
+		{"[2001:db8:0:0:0:0:0:1]:443", "2001:db8::1"},
+		{"::ffff:203.0.113.11", "203.0.113.11"},
+		{"not-an-ip", ""},
+	} {
+		user := createReserveTestUser(t, 0)
+		require.NoError(t, RecordRegistrationDevice(nil, user.Id, test.address, testChromeUserAgent))
+		require.NoError(t, RecordRegistrationDevice(nil, user.Id, "198.51.100.99", testFirefoxUserAgent))
+		device, err := GetRegistrationDevice(user.Id)
+		require.NoError(t, err)
+		assert.Equal(t, test.expected, device.ClientIP)
+		assert.Equal(t, testChromeUserAgent, device.UserAgent)
+		encoded, err := common.Marshal(device)
+		require.NoError(t, err)
+		assert.NotContains(t, string(encoded), "client_ip", "raw model JSON must not expose the address")
+	}
+}
+
+func TestRegistrationAuditPagesAcceptedSignupsAndPreservesLegacyRows(t *testing.T) {
+	setupRegistrationDeviceTestState(t, true)
+	user := createReserveTestUser(t, 0)
+	// Build the shipped rc42 shape, rather than DropColumn (SQLite rebuilds lose indexes).
+	require.NoError(t, DB.Migrator().DropTable(&XingyaRegistrationDevice{}))
+	legacy := struct {
+		Id            int    `gorm:"primaryKey;autoIncrement"`
+		UserId        int    `gorm:"not null;uniqueIndex:idx_xingya_registration_devices_user"`
+		IpHash        string `gorm:"type:char(64);not null;index:idx_xingya_regdev_ip_ua_time,priority:1"`
+		IpPrefix      string `gorm:"type:varchar(64)"`
+		UserAgent     string `gorm:"type:varchar(512)"`
+		UaHash        string `gorm:"type:char(64);not null;index:idx_xingya_regdev_ip_ua_time,priority:2"`
+		UaBucketHash  string `gorm:"type:char(64)"`
+		SecretVersion string `gorm:"type:varchar(16);not null"`
+		RegTime       int64  `gorm:"bigint;not null;index:idx_xingya_regdev_ip_ua_time,priority:3"`
+	}{UserId: user.Id, IpHash: common.GenerateHMAC("203.0.113.10"), IpPrefix: "203.0.113.0/24",
+		UserAgent: testChromeUserAgent, UaHash: common.GenerateHMAC(testChromeUserAgent),
+		UaBucketHash: registrationUserAgentBucketHash(testChromeUserAgent), SecretVersion: registrationSecretVersion(), RegTime: 200}
+	require.NoError(t, DB.Table("xingya_registration_devices").AutoMigrate(&legacy))
+	require.NoError(t, DB.Table("xingya_registration_devices").Create(&legacy).Error)
+	require.NoError(t, InitXingyaTables(DB))
+	require.NoError(t, InitXingyaTables(DB))
+	assert.True(t, DB.Migrator().HasIndex(&XingyaRegistrationDevice{}, "idx_xingya_regdev_registration_time"))
+	assert.True(t, DB.Migrator().HasIndex(&XingyaRegistrationDevice{}, "idx_xingya_registration_devices_user"))
+	second := createReserveTestUser(t, 0)
+	require.NoError(t, RecordRegistrationDevice(nil, second.Id, "2001:db8::2", testFirefoxUserAgent))
+	require.NoError(t, DB.Model(&XingyaRegistrationDevice{}).Where("user_id = ?", second.Id).Update("reg_time", 200).Error)
+	third := createReserveTestUser(t, 0)
+	require.NoError(t, RecordRegistrationDevice(nil, third.Id, "203.0.113.12", testChromeUserAgent))
+	require.NoError(t, DB.Model(&XingyaRegistrationDevice{}).Where("user_id = ?", third.Id).Update("reg_time", 300).Error)
+
+	items, total, err := GetRegistrationDevices(200, 200, 0, 1)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, total, "time bounds are inclusive and count is independent of pagination")
+	require.Len(t, items, 1)
+	assert.Equal(t, second.Id, items[0].UserId, "same-second signups use a stable id tie-breaker")
+	assert.Equal(t, "2001:db8::2", items[0].ClientIP)
+	assert.Equal(t, second.Username, items[0].Username)
+	items, total, err = GetRegistrationDevices(200, 200, 1, 1)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, total)
+	require.Len(t, items, 1)
+	assert.Equal(t, user.Id, items[0].UserId)
+	assert.Empty(t, items[0].ClientIP)
+	assert.Equal(t, testChromeUserAgent, items[0].UserAgent)
+	items, total, err = GetRegistrationDevices(200, 200, 2, 1)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, total)
+	assert.Empty(t, items)
+	items, total, err = GetRegistrationDevices(301, 400, 0, 20)
+	require.NoError(t, err)
+	assert.Zero(t, total)
+	assert.NotNil(t, items)
+	assert.Empty(t, items)
 }
 
 func TestPruneRegistrationDevicesRemovesOnlyExpiredRows(t *testing.T) {

@@ -125,7 +125,12 @@ func RequiredConsumeQuota() int {
 // column can be reached. Granted/cancelled rows never change. The result records whether
 // this call actually contributed, allowing refunds to distinguish new exclusions from
 // calls written before that metadata existed.
-func RecordSuccessfulBillableCall(userId int, quotaConsumed int) bool {
+func RecordSuccessfulBillableCall(userId int, quotaConsumed int, fundingSource ...string) bool {
+	for _, source := range fundingSource {
+		if source != "" && source != "wallet" && source != "subscription" {
+			return false
+		}
+	}
 	if userId <= 0 || DB == nil || !xingyaTablesReady.Load() {
 		return false
 	}

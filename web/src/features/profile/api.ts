@@ -300,8 +300,8 @@ export async function performCheckin(
   turnstileToken?: string
 ): Promise<ApiResponse<CheckinResponse>> {
   const url = turnstileToken
-    ? `/api/user/checkin?turnstile=${encodeURIComponent(turnstileToken)}`
-    : '/api/user/checkin'
+    ? `/api/user/xingya-daily-claim?turnstile=${encodeURIComponent(turnstileToken)}`
+    : '/api/user/xingya-daily-claim'
   const res = await api.post(url)
   return res.data
 }

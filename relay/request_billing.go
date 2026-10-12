@@ -22,6 +22,14 @@ import (
 // provide the current request body through BodyStorage or BillingRequestInput;
 // channel retries retain the resulting billing session and pricing snapshot.
 func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
+	if err := service.PrepareCheckinRequest(c, info); err != nil {
+		return service.CheckinBillingError(err)
+	}
+	if info.TokenQuotaSource == service.BillingSourceCheckin {
+		if err := helper.ModelMappedHelper(c, info, nil); err != nil {
+			return service.CheckinBillingError(err)
+		}
+	}
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
 	meta := &types.TokenCountMeta{TokenType: types.TokenTypeTokenizer}
 	if info.Request != nil && (needSensitiveCheck || constant.CountToken) {
@@ -59,7 +67,7 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest))
 	}
-	if priceData.FreeModel {
+	if priceData.FreeModel && info.TokenQuotaSource != service.BillingSourceCheckin {
 		logger.LogInfo(c, fmt.Sprintf("模型 %s 免费，跳过预扣费", info.OriginModelName))
 		return nil
 	}

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"maps"
 	"math"
@@ -93,7 +94,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 	if task != nil && task.Status == model.TaskStatusSuccess && task.Quota > 0 {
 		// Asynchronous tasks are counted when polling reaches SUCCESS; this branch is
 		// only for an immediate successful result returned by the submit request.
-		model.RecordSuccessfulBillableCall(info.UserId, task.Quota)
+		model.RecordSuccessfulBillableCall(info.UserId, task.Quota, info.BillingSource)
 	}
 }
 
@@ -119,6 +120,9 @@ func taskIsSubscription(task *model.Task) bool {
 
 // taskAdjustFunding 调整任务的资金来源（钱包或订阅），delta > 0 表示扣费，delta < 0 表示退还。
 func taskAdjustFunding(task *model.Task, delta int) error {
+	if task.PrivateData.BillingSource == BillingSourceCheckin {
+		return errors.New("签到额度不支持未接入的异步结算")
+	}
 	if taskIsSubscription(task) {
 		return model.PostConsumeUserSubscriptionDelta(task.PrivateData.SubscriptionId, int64(delta))
 	}

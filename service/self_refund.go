@@ -83,6 +83,9 @@ func JudgeSelfRefund(log *model.Log, refundedLogIds map[int]bool) *RefundableLog
 
 	// 获取资金来源
 	fundingSource := getFundingSource(other)
+	if fundingSource != BillingSourceWallet && fundingSource != BillingSourceSubscription {
+		return nil
+	}
 	subscriptionId := getSubscriptionId(other)
 
 	// 计算基数

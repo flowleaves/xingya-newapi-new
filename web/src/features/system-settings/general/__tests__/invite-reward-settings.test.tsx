@@ -71,7 +71,10 @@ async function renderSettings(requiredConsumeUsd = 1) {
 beforeEach(() => {
   vi.spyOn(api, 'put').mockResolvedValue({ data: { success: true } })
   useSystemConfigStore.setState((state) => ({
-    config: { ...state.config, currency: { ...state.config.currency, quotaPerUnit: 500000 } },
+    config: {
+      ...state.config,
+      currency: { ...state.config.currency, quotaPerUnit: 500000 },
+    },
   }))
 })
 
@@ -90,6 +93,13 @@ test('the spend gate is entered in USD and saves under its own option key', asyn
       value: 2.5,
     })
   )
+})
+
+test('the new 0.8 USD gate is displayed as 80 platform credits', async () => {
+  expect(await renderSettings(0.8)).toHaveValue(0.8)
+  expect(
+    screen.getByText(/Equivalent to 🌱80 in platform currency\./)
+  ).toBeInTheDocument()
 })
 
 test('the platform-currency equivalent follows the entered amount, not a fixed label', async () => {

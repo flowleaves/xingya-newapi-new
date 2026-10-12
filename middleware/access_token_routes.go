@@ -104,6 +104,13 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/user/2fa/backup_codes":              accessTokenScopeRule("account_security:write"),
 	"GET /api/user/checkin":                        accessTokenScopeRule("wallet:read"),
 	"POST /api/user/checkin":                       accessTokenScopeRule("wallet:write"),
+	"GET /api/user/xingya-checkin":                 accessTokenScopeRule("wallet:read"),
+	"POST /api/user/xingya-daily-claim":            accessTokenSessionRule,
+	"POST /api/user/xingya-checkin/key":            accessTokenSessionRule,
+	"GET /api/xingya/checkin/settings":             accessTokenScopeRule("option:read"),
+	"PUT /api/xingya/checkin/settings":             accessTokenScopeRule("option:write"),
+	"GET /api/xingya/checkin/reviews":              accessTokenScopeRule("option:read"),
+	"POST /api/xingya/checkin/reviews/resolve":     accessTokenSessionRule,
 	"GET /api/user/oauth/bindings":                 accessTokenScopeRule("account_security:read"),
 	"DELETE /api/user/oauth/bindings/:provider_id": accessTokenScopeRule("account_security:write"),
 

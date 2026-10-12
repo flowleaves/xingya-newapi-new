@@ -147,7 +147,10 @@ func SetApiRouter(router *gin.Engine) {
 				// POST credits real wallet quota on a tiered schedule, so it is
 				// rate limited per user in addition to the Turnstile check.
 				selfRoute.GET("/checkin", controller.GetCheckinStatus)
-				selfRoute.POST("/checkin", middleware.UserCriticalRateLimit("checkin"), middleware.TurnstileCheck(), controller.DoCheckin)
+				selfRoute.POST("/checkin", controller.DoCheckin)
+				selfRoute.GET("/xingya-checkin", controller.GetXingyaCheckinStatus)
+				selfRoute.POST("/xingya-daily-claim", middleware.CheckinBrowserSession(), middleware.SessionCookieOriginGuard(), middleware.UserCriticalRateLimit("checkin"), middleware.TurnstileCheck(), controller.ClaimXingyaDailyCredit)
+				selfRoute.POST("/xingya-checkin/key", middleware.CheckinBrowserSession(), middleware.SessionCookieOriginGuard(), middleware.UserCriticalRateLimit("checkin-key"), controller.CreateXingyaCheckinKey)
 
 				// Custom OAuth bindings
 				selfRoute.GET("/oauth/bindings", controller.GetUserOAuthBindings)
@@ -162,6 +165,7 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.POST("/topup/complete", controller.AdminCompleteTopUp)
 				adminRoute.GET("/search", controller.SearchUsers)
 				adminRoute.GET("/registration_devices/risk", controller.AdminListRegistrationRisk)
+				adminRoute.GET("/registration_devices", controller.AdminListRegistrationDevices)
 				adminRoute.GET("/:id/oauth/bindings", controller.GetUserOAuthBindingsByAdmin)
 				adminRoute.DELETE("/:id/oauth/bindings/:provider_id", controller.UnbindCustomOAuthByAdmin)
 				adminRoute.DELETE("/:id/bindings/:binding_type", controller.AdminClearUserBinding)
@@ -226,6 +230,11 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/subscription/epay/return", controller.SubscriptionEpayReturn)
 		apiRouter.POST("/subscription/epay/return", anonymousRequestBodyLimit, controller.SubscriptionEpayReturn)
 		optionRoute := apiRouter.Group("/option")
+		checkinSettings := apiRouter.Group("/xingya/checkin", middleware.RootAuth(), middleware.DisableCache())
+		checkinSettings.GET("/settings", controller.GetXingyaCheckinSettings)
+		checkinSettings.PUT("/settings", controller.UpdateXingyaCheckinSettings)
+		checkinSettings.GET("/reviews", controller.ListXingyaCheckinReviews)
+		checkinSettings.POST("/reviews/resolve", middleware.CheckinBrowserSession(), middleware.SessionCookieOriginGuard(), middleware.UserCriticalRateLimit("checkin-review"), controller.ResolveXingyaCheckinReview)
 		optionRoute.Use(middleware.RootAuth())
 		{
 			optionRoute.GET("/", controller.GetOptions)

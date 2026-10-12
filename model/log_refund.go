@@ -30,6 +30,43 @@ func (LogRefund) TableName() string {
 	return "log_refunds"
 }
 
+// The original request decides the funding source, never the current key name
+// or caller-supplied refund arguments. Legacy logs keep their former semantics.
+func validateRefundFunding(log *Log, expected string) error {
+	other, err := common.StrToMap(log.Other)
+	if err != nil && log.Other != "" {
+		return errors.New("无法核实消费资金来源")
+	}
+	source, _ := other["billing_source"].(string)
+	if source == "" {
+		if consumed, ok := other["subscription_consumed"].(float64); ok && consumed > 0 {
+			source = "subscription"
+		} else if id, ok := other["subscription_id"].(float64); ok && id > 0 {
+			source = "subscription"
+		} else if deducted, ok := other["wallet_quota_deducted"].(float64); ok && deducted > 0 {
+			source = "wallet"
+		} else {
+			// Before funding metadata existed, the service chose the refund
+			// writer from its original consumption record. Keep that contract;
+			// a durable check-in ledger below still rejects missing-source logs.
+			source = expected
+		}
+	}
+	if source != expected {
+		return errors.New("该资金来源不支持此补回操作")
+	}
+	if xingyaTablesReady.Load() && DB.Migrator().HasTable(&XingyaCheckinSpend{}) {
+		var count int64
+		if err := DB.Model(&XingyaCheckinSpend{}).Where("request_id = ? AND user_id = ?", log.RequestId, log.UserId).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return errors.New("签到额度不参与自助补回")
+		}
+	}
+	return nil
+}
+
 // ensureLogRefundTable creates log_refunds on a database that does not have it,
 // and does nothing at all when it already exists.
 //
@@ -211,6 +248,9 @@ func DoSelfRefundWallet(userId int, logId int, baseQuota int, refundAmount int, 
 	if err != nil || log.UserId != userId || log.Type != LogTypeConsume || log.RequestId != requestId {
 		return errors.New("消费记录不存在")
 	}
+	if err := validateRefundFunding(log, "wallet"); err != nil {
+		return err
+	}
 	refund := &LogRefund{
 		UserId:        userId,
 		LogId:         logId,
@@ -302,6 +342,9 @@ func DoSelfRefundSubscription(userId int, logId int, subscriptionId int, baseQuo
 	log, err := GetLogById(logId)
 	if err != nil || log.UserId != userId || log.Type != LogTypeConsume || log.RequestId != requestId {
 		return errors.New("消费记录不存在")
+	}
+	if err := validateRefundFunding(log, "subscription"); err != nil {
+		return err
 	}
 	refund := &LogRefund{
 		UserId:         userId,

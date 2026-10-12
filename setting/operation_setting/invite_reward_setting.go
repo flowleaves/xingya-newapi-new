@@ -23,8 +23,8 @@ type InviteRewardSetting struct {
 	RequiredConsumeUSD float64 `json:"required_consume_usd"`
 }
 
-// defaultRequiredConsumeUSD is one US dollar, matching the published referral terms.
-const defaultRequiredConsumeUSD = 1.0
+// defaultRequiredConsumeUSD is USD 0.80 (80 芽点 at 100 芽点 per USD).
+const defaultRequiredConsumeUSD = 0.8
 
 var inviteRewardSetting = InviteRewardSetting{
 	RequiredConsumeUSD: defaultRequiredConsumeUSD,

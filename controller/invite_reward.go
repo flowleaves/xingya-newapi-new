@@ -125,29 +125,11 @@ func maskInviteeIdentity(value string) string {
 }
 
 // AdminListRegistrationRisk returns recent duplicate fingerprint groups. The default
-// range is the last 90 days; raw addresses never cross this API boundary.
+// range is the last 90 days. Recorded addresses are restricted to administrators.
 func AdminListRegistrationRisk(c *gin.Context) {
-	now := common.GetTimestamp()
-	from := now - 90*24*60*60
-	to := now
-	if value := c.Query("from"); value != "" {
-		parsed, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			common.ApiErrorMsg(c, "无效的开始时间")
-			return
-		}
-		from = parsed
-	}
-	if value := c.Query("to"); value != "" {
-		parsed, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			common.ApiErrorMsg(c, "无效的结束时间")
-			return
-		}
-		to = parsed
-	}
-	if from > to {
-		common.ApiErrorMsg(c, "时间范围无效")
+	c.Header("Cache-Control", "no-store")
+	from, to, ok := registrationTimeRange(c)
+	if !ok {
 		return
 	}
 	minRepeats := 2
@@ -160,6 +142,10 @@ func AdminListRegistrationRisk(c *gin.Context) {
 		minRepeats = parsed
 	}
 	pageInfo := common.GetPageQuery(c)
+	if pageInfo.Page < 1 || pageInfo.PageSize < 1 || pageInfo.Page > int(^uint(0)>>1)/pageInfo.PageSize {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
 	groups, total, err := model.GetRegistrationRiskGroups(from, to, minRepeats, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
@@ -177,13 +163,63 @@ func AdminListRegistrationRisk(c *gin.Context) {
 	})
 }
 
+// registrationTimeRange keeps both registration audit lists on the same date range.
+func registrationTimeRange(c *gin.Context) (int64, int64, bool) {
+	now := common.GetTimestamp()
+	from := now - 90*24*60*60
+	to := now
+	if value := c.Query("from"); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsed < 0 {
+			common.ApiErrorMsg(c, "无效的开始时间")
+			return 0, 0, false
+		}
+		from = parsed
+	}
+	if value := c.Query("to"); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsed < 0 {
+			common.ApiErrorMsg(c, "无效的结束时间")
+			return 0, 0, false
+		}
+		to = parsed
+	}
+	if from > to {
+		common.ApiErrorMsg(c, "时间范围无效")
+		return 0, 0, false
+	}
+	return from, to, true
+}
+
+// AdminListRegistrationDevices exposes exact recorded addresses only behind AdminAuth.
+func AdminListRegistrationDevices(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	from, to, ok := registrationTimeRange(c)
+	if !ok {
+		return
+	}
+	pageInfo := common.GetPageQuery(c)
+	// GetPageQuery has legacy negative-value behavior; do not permit an unbounded list.
+	if pageInfo.Page < 1 || pageInfo.PageSize < 1 || pageInfo.Page > int(^uint(0)>>1)/pageInfo.PageSize {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	items, total, err := model.GetRegistrationDevices(from, to, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{
+		"items": items, "total": total, "page": pageInfo.Page,
+		"page_size": pageInfo.PageSize, "from": from, "to": to,
+	})
+}
+
 // AdminGetRegistrationDevice serves the device signals recorded for one registration.
 //
-// It is what makes the same-device limit diagnosable. The response carries the masked
-// network and the keyed digests that were actually stored — never the literal client
-// address — so an operator can confirm whether a rejected signup matched an existing
-// record without the endpoint becoming a way to read user addresses out of the database.
+// It includes the exact recorded address for administrators; legacy rows have none.
 func AdminGetRegistrationDevice(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	userId, err := strconv.Atoi(c.Param("id"))
 	if err != nil || userId <= 0 {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
@@ -201,6 +237,7 @@ func AdminGetRegistrationDevice(c *gin.Context) {
 	}
 	common.ApiSuccess(c, gin.H{
 		"user_id":    device.UserId,
+		"client_ip":  device.ClientIP,
 		"ip_prefix":  device.IpPrefix,
 		"ip_hash":    device.IpHash,
 		"user_agent": device.UserAgent,

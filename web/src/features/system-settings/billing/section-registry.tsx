@@ -22,10 +22,11 @@ import {
   CheckinSettingsSection,
   type CheckinTierValue,
 } from '../general/checkin-settings-section'
+import { InviteRewardSettingsSection } from '../general/invite-reward-settings-section'
 import { PricingSection } from '../general/pricing-section'
 import { QuotaSettingsSection } from '../general/quota-settings-section'
 import { SelfRefundSettingsSection } from '../general/self-refund-settings-section'
-import { InviteRewardSettingsSection } from '../general/invite-reward-settings-section'
+import { XingyaCheckinSettingsSection } from '../general/xingya-checkin-settings-section'
 import { PaymentSettingsSection } from '../integrations/payment-settings-section'
 import { RatioSettingsCard } from '../models/ratio-settings-card'
 import type { BillingSettings } from '../types'
@@ -221,32 +222,42 @@ const BILLING_SECTIONS = [
   },
   {
     id: 'checkin',
-    titleKey: 'Check-in Rewards',
+    titleKey: 'Legacy Check-in Rules',
     build: (settings: BillingSettings) => (
-      <CheckinSettingsSection
-        defaultValues={{
-          enabled: settings['checkin_setting.enabled'] ?? false,
-          count_enabled: settings['checkin_setting.count_enabled'] ?? true,
-          count_tiers: parseCheckinTiers(
-            settings['checkin_setting.count_tiers']
-          ),
-          quota_enabled: settings['checkin_setting.quota_enabled'] ?? true,
-          quota_tiers: parseCheckinTiers(
-            settings['checkin_setting.quota_tiers']
-          ),
-          include_subscription:
-            settings['checkin_setting.include_subscription'] ?? true,
-          c_enabled: settings['checkin_setting.c_enabled'] ?? true,
-          c_base_threshold:
-            settings['checkin_setting.c_base_threshold'] ?? 1000,
-          c_base_reward: settings['checkin_setting.c_base_reward'] ?? 10,
-          c_step_quota: settings['checkin_setting.c_step_quota'] ?? 1000,
-          c_step_reward: settings['checkin_setting.c_step_reward'] ?? 5,
-          c_max_reward: settings['checkin_setting.c_max_reward'] ?? 30,
-          fallback_reward: settings['checkin_setting.fallback_reward'] ?? 5,
-        }}
-      />
+      <div className='space-y-4'>
+        <fieldset disabled className='min-w-0'>
+          <CheckinSettingsSection
+            readOnly
+            defaultValues={{
+              enabled: settings['checkin_setting.enabled'] ?? false,
+              count_enabled: settings['checkin_setting.count_enabled'] ?? true,
+              count_tiers: parseCheckinTiers(
+                settings['checkin_setting.count_tiers']
+              ),
+              quota_enabled: settings['checkin_setting.quota_enabled'] ?? true,
+              quota_tiers: parseCheckinTiers(
+                settings['checkin_setting.quota_tiers']
+              ),
+              include_subscription:
+                settings['checkin_setting.include_subscription'] ?? true,
+              c_enabled: settings['checkin_setting.c_enabled'] ?? true,
+              c_base_threshold:
+                settings['checkin_setting.c_base_threshold'] ?? 1000,
+              c_base_reward: settings['checkin_setting.c_base_reward'] ?? 10,
+              c_step_quota: settings['checkin_setting.c_step_quota'] ?? 1000,
+              c_step_reward: settings['checkin_setting.c_step_reward'] ?? 5,
+              c_max_reward: settings['checkin_setting.c_max_reward'] ?? 30,
+              fallback_reward: settings['checkin_setting.fallback_reward'] ?? 5,
+            }}
+          />
+        </fieldset>
+      </div>
     ),
+  },
+  {
+    id: 'xingya-checkin',
+    titleKey: 'Xingya Check-in · Dedicated Credit',
+    build: () => <XingyaCheckinSettingsSection />,
   },
   {
     id: 'self-refund',
@@ -274,7 +285,7 @@ const BILLING_SECTIONS = [
       <InviteRewardSettingsSection
         defaultValues={{
           required_consume_usd:
-            settings['invite_reward_setting.required_consume_usd'] ?? 1,
+            settings['invite_reward_setting.required_consume_usd'] ?? 0.8,
         }}
       />
     ),

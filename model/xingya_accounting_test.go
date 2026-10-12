@@ -92,6 +92,10 @@ func TestXingyaAccountingDatabaseMatrix(t *testing.T) {
 				{"zero gift budget", TestZeroQuotaRegistrationsDoNotSpendSubnetBudget},
 				{"client cancellation", TestCancelledSignupContextCannotBypassPendingSubnetBudget},
 				{"populated legacy registration migration", TestMigrationAddsTheNormalizedDigestToAPopulatedLegacyTable},
+				{"registration exact addresses", TestRegistrationAuditStoresNormalizedIPAndKeepsOriginalOnRetry},
+				{"registration pagination and rc42 upgrade", TestRegistrationAuditPagesAcceptedSignupsAndPreservesLegacyRows},
+				{"duplicate registration addresses", TestGetRegistrationRiskGroupsReturnsDuplicateAccountsWithExactIP},
+				{"duplicate registration pagination", TestGetRegistrationRiskGroupsPaginatesGroupsBeforeLoadingRegistrations},
 			} {
 				t.Run(regression.name, regression.run)
 			}

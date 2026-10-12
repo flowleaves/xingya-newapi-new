@@ -1196,3 +1196,28 @@ func TestFrontendSimulationContract(t *testing.T) {
 		})
 	}
 }
+
+func TestMaximumTokenCostBoundsEveryPricingBranch(t *testing.T) {
+	for _, tc := range []struct {
+		expression          string
+		input, output, want float64
+	}{
+		{`tier("base", p * 2 + c * 8)`, 100, 50, 600},
+		{`(len <= 32000 ? tier("short", fixed(0.01)) : tier("long", p * 2 + c * 8)) * (param("fast") == true ? 2 : 1)`, 100, 50, 20000},
+		{`v1:tier("cache", p*2+cr*0.2+cc*2.5+cc1h*4+c*8)`, 100, 50, 1270},
+		{`tier("base", max(0, p-50)*2+ceil(c/3))`, 100, 50, 117},
+		{`tier("base", fixed(0))`, 100, 50, 0},
+	} {
+		t.Run(tc.expression, func(t *testing.T) {
+			cost, err := billingexpr.MaximumTokenCost(tc.expression, tc.input, tc.output)
+			require.NoError(t, err)
+			assert.InDelta(t, tc.want, cost, 1e-9)
+		})
+	}
+	for _, expression := range []string{`tier("base", p * param("price"))`, `tier("base", p / c)`, `tier("base", p * 1e308)`, `tier("base", u("seconds"))`} {
+		_, err := billingexpr.MaximumTokenCost(expression, 100, 50)
+		require.Error(t, err, expression)
+	}
+	_, err := billingexpr.MaximumTokenCost(`p*2`, math.Inf(1), 50)
+	require.Error(t, err)
+}

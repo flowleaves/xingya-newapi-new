@@ -191,6 +191,20 @@ func appendBillingInfo(relayInfo *relaycommon.RelayInfo, other *model.LogOther) 
 	if relayInfo.BillingSource != "" {
 		other.SetPublic("billing_source", relayInfo.BillingSource)
 	}
+	if relayInfo.BillingSource == BillingSourceCheckin {
+		other.SetPublic("wallet_quota_deducted", 0)
+		var spend model.XingyaCheckinSpend
+		if err := model.DB.Where("request_id = ? AND user_id = ?", relayInfo.RequestId, relayInfo.UserId).Take(&spend).Error; err == nil {
+			other.SetPublic("checkin_consumed", spend.Consumed)
+			other.SetPublic("checkin_actual_quota", spend.ActualQuota)
+			other.SetAdmin("checkin_ledger_state", spend.State)
+			if spend.UnpaidQuota > 0 {
+				other.SetAdmin("checkin_unpaid_quota", spend.UnpaidQuota)
+			}
+		} else {
+			common.SysError("cannot read checkin settlement record: " + err.Error())
+		}
+	}
 	if relayInfo.UserSetting.BillingPreference != "" {
 		other.SetPublic("billing_preference", relayInfo.UserSetting.BillingPreference)
 	}

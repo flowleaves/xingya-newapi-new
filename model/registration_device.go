@@ -30,8 +30,7 @@ const registrationDedupWindowSeconds int64 = 7 * 24 * 60 * 60
 const registrationTrialReservationSeconds int64 = 10 * 60
 
 // registrationDeviceRetentionSeconds bounds how long device rows are kept. The rows only
-// exist to enforce the deduplication window, so keeping them far past it would retain
-// registration metadata for no benefit.
+// support trial deduplication and the administrator's registration audit view.
 const registrationDeviceRetentionSeconds int64 = 180 * 24 * 60 * 60
 
 // XingyaRegistrationDevice records the device signals observed for one registration.
@@ -44,6 +43,8 @@ const registrationDeviceRetentionSeconds int64 = 180 * 24 * 60 * 60
 // ordinary user behind a shared carrier NAT after the first person there registered. The
 // network is bounded by a budget instead of by a match.
 //
+// ClientIP additionally retains the normalized address for the administrator audit view.
+// Legacy rows have no ClientIP and cannot be reconstructed from the keyed digest.
 // Two digests are kept for the client string for the same reason. UaHash is the exact
 // truncated user agent, and UaBucketHash is the same agent reduced to its platform and
 // browser family. Matching the exact string alone is defeated by any build-number change
@@ -53,10 +54,13 @@ const registrationDeviceRetentionSeconds int64 = 180 * 24 * 60 * 60
 // UserAgent is truncated to the same 512 characters AuditLog uses. Neither digest is
 // reversible, and the truncated agent is stored for human review only.
 type XingyaRegistrationDevice struct {
-	Id        int    `json:"id" gorm:"primaryKey;autoIncrement"`
-	UserId    int    `json:"user_id" gorm:"not null;uniqueIndex:idx_xingya_registration_devices_user"`
-	IpHash    string `json:"-" gorm:"type:char(64);not null;index:idx_xingya_regdev_ip_ua_time,priority:1"`
-	IpPrefix  string `json:"-" gorm:"type:varchar(64)"`
+	Id       int    `json:"id" gorm:"primaryKey;autoIncrement;index:idx_xingya_regdev_registration_time,priority:2"`
+	UserId   int    `json:"user_id" gorm:"not null;uniqueIndex:idx_xingya_registration_devices_user"`
+	IpHash   string `json:"-" gorm:"type:char(64);not null;index:idx_xingya_regdev_ip_ua_time,priority:1"`
+	IpPrefix string `json:"-" gorm:"type:varchar(64)"`
+	// Nullable for legacy rows: a hash/network cannot recover a historical IP.
+	// Only the explicit administrator projection exposes this address.
+	ClientIP  string `json:"-" gorm:"type:varchar(45)"`
 	UserAgent string `json:"user_agent" gorm:"type:varchar(512)"`
 	UaHash    string `json:"-" gorm:"type:char(64);not null;index:idx_xingya_regdev_ip_ua_time,priority:2"`
 	// This column is deliberately nullable. It was added after the table shipped, and both
@@ -66,7 +70,7 @@ type XingyaRegistrationDevice struct {
 	// normalized comparison, which is the honest answer for a row with no digest.
 	UaBucketHash  string `json:"-" gorm:"type:char(64)"`
 	SecretVersion string `json:"-" gorm:"type:varchar(16);not null"`
-	RegTime       int64  `json:"reg_time" gorm:"bigint;not null;index:idx_xingya_regdev_ip_ua_time,priority:3"`
+	RegTime       int64  `json:"reg_time" gorm:"bigint;not null;index:idx_xingya_regdev_ip_ua_time,priority:3;index:idx_xingya_regdev_registration_time,priority:1"`
 }
 
 func (XingyaRegistrationDevice) TableName() string {
@@ -515,7 +519,9 @@ func RecordRegistrationDevice(tx *gorm.DB, userId int, clientIp string, userAgen
 	truncatedUa := truncateRegistrationUserAgent(userAgent)
 	ipHash := unknownRegistrationIPHash()
 	ipPrefix := ""
+	clientAddress := ""
 	if ok {
+		clientAddress = addr.String()
 		ipHash = common.GenerateHMAC(addr.String())
 		ipPrefix = registrationIPPrefix(addr)
 	}
@@ -523,6 +529,7 @@ func RecordRegistrationDevice(tx *gorm.DB, userId int, clientIp string, userAgen
 		UserId:        userId,
 		IpHash:        ipHash,
 		IpPrefix:      ipPrefix,
+		ClientIP:      clientAddress,
 		UserAgent:     truncatedUa,
 		UaHash:        common.GenerateHMAC(truncatedUa),
 		UaBucketHash:  registrationUserAgentBucketHash(truncatedUa),
@@ -551,7 +558,36 @@ type RegistrationRiskRegistration struct {
 	RegTime  int64  `json:"reg_time"`
 }
 
+// RegistrationDeviceItem is the administrator-only projection of an accepted signup.
+// Fingerprints and account credentials are deliberately omitted.
+type RegistrationDeviceItem struct {
+	UserId    int    `json:"user_id"`
+	Username  string `json:"username"`
+	ClientIP  string `json:"client_ip"`
+	UserAgent string `json:"user_agent"`
+	RegTime   int64  `json:"reg_time"`
+}
+
+func GetRegistrationDevices(from, to int64, startIdx, limit int) ([]RegistrationDeviceItem, int64, error) {
+	startIdx = max(0, startIdx)
+	if limit <= 0 {
+		limit = common.ItemsPerPage
+	}
+	limit = min(limit, 100)
+	query := DB.Table("xingya_registration_devices AS d").Where("d.reg_time >= ? AND d.reg_time <= ?", from, to)
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	items := make([]RegistrationDeviceItem, 0)
+	err := query.Select("d.user_id, COALESCE(u.username, '') AS username, COALESCE(d.client_ip, '') AS client_ip, d.user_agent, d.reg_time").
+		Joins("LEFT JOIN users AS u ON u.id = d.user_id").
+		Order("d.reg_time DESC, d.id DESC").Offset(startIdx).Limit(limit).Scan(&items).Error
+	return items, total, err
+}
+
 type RegistrationRiskGroup struct {
+	ClientIP      string                         `json:"client_ip"`
 	IPFingerprint string                         `json:"ip_fingerprint"`
 	UAFingerprint string                         `json:"ua_fingerprint"`
 	SecretVersion string                         `json:"secret_version"`
@@ -562,6 +598,7 @@ type RegistrationRiskGroup struct {
 }
 
 type registrationRiskJoinedRow struct {
+	ClientIP      string `gorm:"column:client_ip"`
 	IpHash        string `gorm:"column:ip_hash"`
 	UaHash        string `gorm:"column:ua_hash"`
 	SecretVersion string `gorm:"column:secret_version"`
@@ -580,8 +617,7 @@ type registrationRiskGroupKey struct {
 }
 
 // GetRegistrationRiskGroups aggregates duplicate exact IP+UA fingerprints for the
-// administrator view. It returns keyed-digest summaries and the truncated UA, never a
-// literal client IP.
+// administrator view, including the recorded exact IP when available.
 func GetRegistrationRiskGroups(from int64, to int64, minRepeats int, startIdx int, limit int) ([]*RegistrationRiskGroup, int64, error) {
 	if minRepeats < 2 {
 		minRepeats = 2
@@ -605,15 +641,15 @@ func GetRegistrationRiskGroups(from int64, to int64, minRepeats int, startIdx in
 	// This keeps the result to two database queries regardless of how many groups are
 	// shown on the page, instead of issuing one account lookup per group.
 	groupedPage := buildGrouped().
-		Order("repeat_count DESC, latest_reg_time DESC").
+		Order("repeat_count DESC, latest_reg_time DESC, ip_hash, ua_hash, secret_version").
 		Limit(limit).Offset(startIdx)
 	var rows []registrationRiskJoinedRow
 	if err := DB.Table("xingya_registration_devices AS d").
-		Select("g.ip_hash, g.ua_hash, g.secret_version, g.repeat_count, g.latest_reg_time, d.user_id, COALESCE(u.username, '') AS username, d.reg_time, d.user_agent").
+		Select("g.ip_hash, g.ua_hash, g.secret_version, g.repeat_count, g.latest_reg_time, d.user_id, COALESCE(u.username, '') AS username, COALESCE(d.client_ip, '') AS client_ip, d.reg_time, d.user_agent").
 		Joins("JOIN (?) AS g ON g.ip_hash = d.ip_hash AND g.ua_hash = d.ua_hash AND g.secret_version = d.secret_version", groupedPage).
 		Joins("LEFT JOIN users AS u ON u.id = d.user_id").
 		Where("d.reg_time >= ? AND d.reg_time <= ? AND d.ip_hash <> ?", from, to, unknownRegistrationIPHash()).
-		Order("g.repeat_count DESC, g.latest_reg_time DESC, d.reg_time DESC").
+		Order("g.repeat_count DESC, g.latest_reg_time DESC, g.ip_hash, g.ua_hash, g.secret_version, d.reg_time DESC, d.id DESC").
 		Find(&rows).Error; err != nil {
 		return nil, 0, err
 	}
@@ -639,6 +675,9 @@ func GetRegistrationRiskGroups(from int64, to int64, minRepeats int, startIdx in
 		groups[groupIndex].Registrations = append(groups[groupIndex].Registrations, RegistrationRiskRegistration{
 			UserId: row.UserId, Username: row.Username, RegTime: row.RegTime,
 		})
+		if groups[groupIndex].ClientIP == "" {
+			groups[groupIndex].ClientIP = row.ClientIP
+		}
 	}
 	return groups, total, nil
 }

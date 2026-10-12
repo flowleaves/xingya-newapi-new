@@ -214,14 +214,30 @@ func GetTokenStatus(c *gin.Context) {
 		return
 	}
 	expiredAt := token.ExpiredTime
+	available := token.RemainQuota
+	granted, used, reserved := token.RemainQuota, 0, 0
+	if token.QuotaSource == model.CheckinQuotaSource {
+		wallet, walletErr := model.GetXingyaCheckinWallet(userId)
+		if walletErr != nil {
+			common.ApiError(c, walletErr)
+			return
+		}
+		available = wallet.Available
+		if !token.UnlimitedQuota {
+			available = min(available, max(0, token.RemainQuota))
+		}
+		granted, used, reserved = wallet.Granted, wallet.Consumed, wallet.Reserved
+	}
 	if expiredAt == -1 {
 		expiredAt = 0
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"object":          "credit_summary",
-		"total_granted":   token.RemainQuota,
-		"total_used":      0, // not supported currently
-		"total_available": token.RemainQuota,
+		"total_granted":   granted,
+		"total_used":      used,
+		"total_available": available,
+		"total_reserved":  reserved,
+		"quota_source":    token.QuotaSource,
 		"expires_at":      expiredAt * 1000,
 	})
 }
@@ -254,6 +270,20 @@ func GetTokenUsage(c *gin.Context) {
 	}
 
 	expiredAt := token.ExpiredTime
+	available := token.RemainQuota
+	granted, used, reserved, unlimited := token.RemainQuota+token.UsedQuota, token.UsedQuota, 0, token.UnlimitedQuota
+	if token.QuotaSource == model.CheckinQuotaSource {
+		wallet, walletErr := model.GetXingyaCheckinWallet(token.UserId)
+		if walletErr != nil {
+			common.ApiError(c, walletErr)
+			return
+		}
+		available = wallet.Available
+		if !token.UnlimitedQuota {
+			available = min(available, max(0, token.RemainQuota))
+		}
+		granted, used, reserved, unlimited = wallet.Granted, wallet.Consumed, wallet.Reserved, false
+	}
 	if expiredAt == -1 {
 		expiredAt = 0
 	}
@@ -264,10 +294,13 @@ func GetTokenUsage(c *gin.Context) {
 		"data": gin.H{
 			"object":               "token_usage",
 			"name":                 token.Name,
-			"total_granted":        token.RemainQuota + token.UsedQuota,
-			"total_used":           token.UsedQuota,
-			"total_available":      token.RemainQuota,
-			"unlimited_quota":      token.UnlimitedQuota,
+			"total_granted":        granted,
+			"total_used":           used,
+			"total_available":      available,
+			"total_reserved":       reserved,
+			"quota_source":         token.QuotaSource,
+			"unlimited_quota":      unlimited,
+			"key_unlimited_quota":  token.UnlimitedQuota,
 			"model_limits":         token.GetModelLimitsMap(),
 			"model_limits_enabled": token.ModelLimitsEnabled,
 			"expires_at":           expiredAt,
@@ -283,6 +316,10 @@ func AddToken(c *gin.Context) {
 		return
 	}
 	token := request.Token
+	if token.QuotaSource != "" {
+		common.ApiErrorMsg(c, "请使用签到页面创建专用密钥")
+		return
+	}
 	if len(token.Name) > 50 {
 		common.ApiErrorI18n(c, i18n.MsgTokenNameTooLong)
 		return
@@ -416,6 +453,14 @@ func UpdateToken(c *gin.Context) {
 	}
 	params["name"] = cleanToken.Name
 	previous := *cleanToken
+	if token.QuotaSource != "" && token.QuotaSource != cleanToken.QuotaSource {
+		common.ApiErrorMsg(c, "不能更改密钥资金来源")
+		return
+	}
+	if statusOnly == "" && cleanToken.QuotaSource == model.CheckinQuotaSource && (token.Group != cleanToken.Group || token.CrossGroupRetry || len(request.AutoGroups.Groups) > 0) {
+		common.ApiErrorMsg(c, "签到密钥分组固定，不能跨组重试")
+		return
+	}
 	if token.Status == common.TokenStatusEnabled {
 		if cleanToken.Status == common.TokenStatusExpired && cleanToken.ExpiredTime <= common.GetTimestamp() && cleanToken.ExpiredTime != -1 {
 			common.ApiErrorI18n(c, i18n.MsgTokenExpiredCannotEnable)

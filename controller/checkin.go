@@ -13,13 +13,13 @@ import (
 // GetCheckinStatus 获取用户签到状态和历史记录
 func GetCheckinStatus(c *gin.Context) {
 	setting := operation_setting.GetCheckinSetting()
-	if !setting.Enabled {
-		common.ApiErrorMsg(c, "签到功能未启用")
-		return
-	}
 	userId := c.GetInt("id")
 	// 获取月份参数，默认为当前月份
 	month := c.DefaultQuery("month", time.Now().Format("2006-01"))
+	if parsed, err := time.Parse("2006-01", month); err != nil || parsed.Format("2006-01") != month {
+		common.ApiErrorMsg(c, "月份格式必须为 YYYY-MM")
+		return
+	}
 
 	stats, err := model.GetUserCheckinStats(userId, month)
 	if err != nil {
@@ -47,7 +47,7 @@ func GetCheckinStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"enabled":              setting.Enabled,
+			"enabled":              false,
 			"count_enabled":        setting.CountEnabled,
 			"quota_enabled":        setting.QuotaEnabled,
 			"include_subscription": setting.IncludeSubscription,
@@ -72,28 +72,5 @@ func GetCheckinStatus(c *gin.Context) {
 
 // DoCheckin 执行用户签到
 func DoCheckin(c *gin.Context) {
-	setting := operation_setting.GetCheckinSetting()
-	if !setting.Enabled {
-		common.ApiErrorMsg(c, "签到功能未启用")
-		return
-	}
-
-	userId := c.GetInt("id")
-
-	checkin, err := model.UserCheckin(userId)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
-		return
-	}
-	model.RecordCheckinLog(userId, checkin.QuotaAwarded)
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "签到成功",
-		"data": gin.H{
-			"quota_awarded": checkin.QuotaAwarded,
-			"checkin_date":  checkin.CheckinDate},
-	})
+	c.JSON(http.StatusGone, gin.H{"success": false, "code": "checkin_endpoint_retired", "message": "原签到接口已停止，请刷新网页后使用每日签到"})
 }

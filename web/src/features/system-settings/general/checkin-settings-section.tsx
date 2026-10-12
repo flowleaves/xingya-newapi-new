@@ -78,6 +78,7 @@ function toTierValues(rows: TierRow[]): CheckinTierValue[] {
 }
 
 export interface CheckinSettingsSectionProps {
+  readOnly?: boolean
   defaultValues: {
     enabled: boolean
     count_enabled: boolean
@@ -148,6 +149,7 @@ export function CheckinSettingsSection(props: CheckinSettingsSectionProps) {
   const [isSaving, setIsSaving] = useState(false)
 
   async function onSave() {
+    if (props.readOnly) return
     const valid = await form.trigger()
     if (!valid) return
 
@@ -199,6 +201,13 @@ export function CheckinSettingsSection(props: CheckinSettingsSectionProps) {
 
   return (
     <SettingsSection title={t('Check-in Rewards')}>
+      {props.readOnly && (
+        <p className='text-muted-foreground text-sm'>
+          {t(
+            'Legacy A/B/C awards are stopped. These settings and historical credits are retained for reference.'
+          )}
+        </p>
+      )}
       <Form {...form}>
         <form className='space-y-6'>
           <SettingsForm>
@@ -206,7 +215,9 @@ export function CheckinSettingsSection(props: CheckinSettingsSectionProps) {
               label={t('Check-in enabled')}
               description={t('Allow users to claim a daily reward.')}
               checked={form.watch('enabled')}
-              onChange={(checked) => form.setValue('enabled', checked, { shouldDirty: true })}
+              onChange={(checked) =>
+                form.setValue('enabled', checked, { shouldDirty: true })
+              }
             />
 
             <ToggleRow
@@ -297,16 +308,18 @@ export function CheckinSettingsSection(props: CheckinSettingsSectionProps) {
             </div>
           </SettingsForm>
 
-          <SettingsPageFormActions
-            onSave={onSave}
-            onReset={() => {
-              form.reset()
-              setCountTiers(toTierRows(props.defaultValues.count_tiers))
-              setQuotaTiers(toTierRows(props.defaultValues.quota_tiers))
-            }}
-            isSaving={isSaving}
-            isSaveDisabled={!form.formState.isDirty}
-          />
+          {!props.readOnly && (
+            <SettingsPageFormActions
+              onSave={onSave}
+              onReset={() => {
+                form.reset()
+                setCountTiers(toTierRows(props.defaultValues.count_tiers))
+                setQuotaTiers(toTierRows(props.defaultValues.quota_tiers))
+              }}
+              isSaving={isSaving}
+              isSaveDisabled={!form.formState.isDirty}
+            />
+          )}
         </form>
       </Form>
     </SettingsSection>

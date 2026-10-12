@@ -222,7 +222,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, "+
 			"tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, modelName, relayInfo.FinalPreConsumedQuota))
 	} else {
-		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, quota)
+		RecordUserBillableUsage(relayInfo, quota)
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
 	}
 
@@ -230,7 +230,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	if billingErr != nil {
 		logger.LogError(ctx, "error settling billing: "+billingErr.Error())
 	} else if totalTokens > 0 && quota > 0 {
-		model.RecordSuccessfulBillableCall(relayInfo.UserId, quota)
+		model.RecordSuccessfulBillableCall(relayInfo.UserId, quota, relayInfo.BillingSource)
 	}
 
 	logModel := modelName
@@ -358,7 +358,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, "+
 			"tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, billingModelName, relayInfo.FinalPreConsumedQuota))
 	} else {
-		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, quota)
+		RecordUserBillableUsage(relayInfo, quota)
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
 	}
 
@@ -366,7 +366,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	if billingErr != nil {
 		logger.LogError(ctx, "error settling billing: "+billingErr.Error())
 	} else if (totalTokens > 0 || fixedPriceBilling) && quota > 0 {
-		model.RecordSuccessfulBillableCall(relayInfo.UserId, quota)
+		model.RecordSuccessfulBillableCall(relayInfo.UserId, quota, relayInfo.BillingSource)
 	}
 
 	logModel := billingModelName
@@ -429,6 +429,9 @@ func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQu
 }
 
 func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool) (result postConsumeQuotaResult, err error) {
+	if relayInfo == nil || relayInfo.TokenQuotaSource == BillingSourceCheckin || relayInfo.BillingSource != "" && relayInfo.BillingSource != BillingSourceWallet && relayInfo.BillingSource != BillingSourceSubscription {
+		return result, errors.New("unsupported funding source for legacy settlement")
+	}
 
 	// 1) Consume from wallet quota OR subscription item
 	if relayInfo != nil && relayInfo.BillingSource == BillingSourceSubscription {

@@ -670,6 +670,24 @@ func SetupContextForToken(c *gin.Context, token *model.Token, parts ...string) e
 	if token == nil {
 		return fmt.Errorf("token is nil")
 	}
+	if token.QuotaSource != "" {
+		if token.QuotaSource != model.CheckinQuotaSource {
+			abortWithOpenAiMessage(c, http.StatusForbidden, "未知密钥资金来源")
+			return errors.New("unknown token funding source")
+		}
+		s, err := model.GetXingyaCheckinSettings()
+		if err != nil || !s.SpendEnabled || s.Group == "" || token.Group != s.Group || token.Group == "auto" || token.CrossGroupRetry || token.AutoGroups != "" || len(parts) > 1 {
+			abortWithOpenAiMessage(c, http.StatusForbidden, "签到密钥已暂停或分组不可用，请切换普通密钥")
+			return errors.New("checkin key is unavailable")
+		}
+		switch c.Request.URL.Path {
+		case "/v1/models", "/v1/chat/completions", "/v1/responses", "/v1/messages", "/v1/embeddings", "/api/usage/token":
+		default:
+			abortWithOpenAiMessage(c, http.StatusForbidden, "此接口尚未接入签到额度，请切换普通密钥")
+			return errors.New("unsupported checkin endpoint")
+		}
+	}
+	c.Set("token_quota_source", token.QuotaSource)
 	c.Set("id", token.UserId)
 	c.Set("token_id", token.Id)
 	c.Set("token_key", token.Key)

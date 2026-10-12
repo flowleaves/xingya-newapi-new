@@ -16,52 +16,20 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Gift } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
-import { Card, CardContent } from '@/components/ui/card'
-import { CheckinCalendarCard } from '@/features/profile/components/checkin-calendar-card'
-import { useStatus } from '@/hooks/use-status'
 
-/**
- * Standalone check-in page.
- *
- * The profile page already hosts the same calendar card; this page exists as a
- * direct entry point from the sidebar. It deliberately reuses that card rather
- * than reimplementing the calendar, so both surfaces share one implementation
- * (and one API contract).
- */
+import { XingyaCheckinCard } from './components/xingya-checkin-card'
+
 export function CheckinPage() {
   const { t } = useTranslation()
-  const { status } = useStatus()
-  const checkinEnabled = status?.checkin_enabled === true
-  // The card can gate its own submit with Turnstile, so it needs the same
-  // site-key wiring the profile page passes.
-  const turnstileEnabled = !!(
-    status?.turnstile_check && status?.turnstile_site_key
-  )
-  const turnstileSiteKey = status?.turnstile_site_key || ''
-
   return (
     <SectionPageLayout>
       <SectionPageLayout.Title>{t('Daily Check-in')}</SectionPageLayout.Title>
       <SectionPageLayout.Content>
         <div className='mx-auto w-full max-w-3xl space-y-4'>
-          {checkinEnabled ? (
-            <CheckinCalendarCard
-              checkinEnabled={checkinEnabled}
-              turnstileEnabled={turnstileEnabled}
-              turnstileSiteKey={turnstileSiteKey}
-            />
-          ) : (
-            <Card data-card-hover='false'>
-              <CardContent className='text-muted-foreground flex items-center gap-2 py-10 text-sm'>
-                <Gift className='size-4' aria-hidden='true' />
-                {t('Check-in is not enabled by the administrator.')}
-              </CardContent>
-            </Card>
-          )}
+          <XingyaCheckinCard />
         </div>
       </SectionPageLayout.Content>
     </SectionPageLayout>

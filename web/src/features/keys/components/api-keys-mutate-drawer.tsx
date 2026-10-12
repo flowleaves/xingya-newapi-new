@@ -105,6 +105,7 @@ export function ApiKeysMutateDrawer({
 }: ApiKeyMutateDrawerProps) {
   const { t } = useTranslation()
   const isUpdate = !!currentRow
+  const isCheckinKey = currentRow?.quota_source === 'checkin'
   const currentRowId = currentRow?.id
   const { triggerRefresh } = useApiKeys()
   const { status, loading: statusLoading } = useStatus()
@@ -265,6 +266,7 @@ export function ApiKeysMutateDrawer({
 
   // Correct group after groups load: if the form value is not in available groups, fall back
   useEffect(() => {
+    if (isCheckinKey) return
     if (groups.length === 0) return
     const currentGroup = selectedGroup
     if (currentGroup && !groups.some((g) => g.value === currentGroup)) {
@@ -279,7 +281,7 @@ export function ApiKeysMutateDrawer({
         form.setValue('cross_group_retry', false)
       }
     }
-  }, [groups, form, selectedGroup])
+  }, [groups, form, selectedGroup, isCheckinKey])
 
   const onSubmit = async (data: ApiKeyFormValues) => {
     setIsSubmitting(true)
@@ -424,6 +426,7 @@ export function ApiKeysMutateDrawer({
                     <FormLabel>{t('Group')}</FormLabel>
                     <FormControl>
                       <ApiKeyGroupCombobox
+                        disabled={isCheckinKey}
                         options={groups}
                         value={field.value}
                         onValueChange={(group) => {
@@ -441,6 +444,13 @@ export function ApiKeysMutateDrawer({
                         placeholder={t('Select a group')}
                       />
                     </FormControl>
+                    {isCheckinKey && (
+                      <FormDescription>
+                        {t(
+                          'This key uses check-in credit and its group is fixed.'
+                        )}
+                      </FormDescription>
+                    )}
                     <FormMessage />
                   </FormItem>
                 )}

@@ -6,7 +6,9 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -72,6 +74,73 @@ func TestAdminListInviteRewardsRejectsUnknownState(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, recorder.Code)
 	assert.Contains(t, recorder.Body.String(), `"success":false`)
+}
+
+func TestRegistrationAuditEndpointsRequireAdminAndReturnBoundedProjection(t *testing.T) {
+	db := setupInviteRewardControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}))
+	require.NoError(t, model.InitXingyaTables(db))
+	oldRedis, oldSecret := common.RedisEnabled, common.SessionSecret
+	common.RedisEnabled, common.SessionSecret = false, "registration-audit-test-secret"
+	t.Cleanup(func() { common.RedisEnabled, common.SessionSecret = oldRedis, oldSecret })
+	admin := &model.User{Username: "registration-audit-admin", Password: "private-password-hash", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, AuthVersion: 1, AffCode: "reg-admin"}
+	user := &model.User{Username: "registered-user", Password: "private-password-hash", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AuthVersion: 1, AffCode: "reg-user"}
+	require.NoError(t, db.Create(admin).Error)
+	require.NoError(t, db.Create(user).Error)
+	require.NoError(t, model.RecordRegistrationDevice(nil, user.Id, "203.0.113.42", "Test browser"))
+	require.NoError(t, model.RecordRegistrationDevice(nil, admin.Id, "203.0.113.42", "Test browser"))
+	adminSession, err := service.CreateLoginSession(admin.Id, "password", "127.0.0.1", "test")
+	require.NoError(t, err)
+	userSession, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "test")
+	require.NoError(t, err)
+	router := gin.New()
+	router.GET("/api/user/registration_devices", middleware.AdminAuth(), AdminListRegistrationDevices)
+	router.GET("/api/user/registration_devices/risk", middleware.AdminAuth(), AdminListRegistrationRisk)
+	for _, path := range []string{"/api/user/registration_devices?p=1&page_size=1", "/api/user/registration_devices/risk?p=1&page_size=1"} {
+		for _, test := range []struct {
+			name, token string
+			status      int
+		}{
+			{"anonymous", "", http.StatusUnauthorized},
+			{"ordinary user", userSession.AccessToken, http.StatusForbidden},
+			{"administrator", adminSession.AccessToken, http.StatusOK},
+		} {
+			t.Run(path+"/"+test.name, func(t *testing.T) {
+				request := httptest.NewRequest(http.MethodGet, path, nil)
+				if test.token != "" {
+					request.Header.Set("Authorization", "Bearer "+test.token)
+				}
+				response := httptest.NewRecorder()
+				router.ServeHTTP(response, request)
+				assert.Equal(t, test.status, response.Code, response.Body.String())
+				assert.NotContains(t, response.Body.String(), "private-password-hash")
+				if test.status != http.StatusOK {
+					assert.NotContains(t, response.Body.String(), "203.0.113.42")
+					return
+				}
+				assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+				assert.Contains(t, response.Body.String(), `"client_ip":"203.0.113.42"`)
+				var payload struct {
+					Success bool `json:"success"`
+					Data    struct {
+						Items []any `json:"items"`
+					} `json:"data"`
+				}
+				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &payload))
+				assert.True(t, payload.Success)
+				assert.Len(t, payload.Data.Items, 1)
+			})
+		}
+	}
+	for _, query := range []string{"p=-1", "page_size=-1", "p=9223372036854775807&page_size=100", "from=-1", "from=bad", "from=200&to=100"} {
+		for _, handler := range []gin.HandlerFunc{AdminListRegistrationDevices, AdminListRegistrationRisk} {
+			response := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(response)
+			c.Request = httptest.NewRequest(http.MethodGet, "/?"+query, nil)
+			handler(c)
+			assert.Contains(t, response.Body.String(), `"success":false`, query)
+		}
+	}
 }
 
 // TestAdminUserListProjectionHidesInviteQualifyingCalls is a regression test for the

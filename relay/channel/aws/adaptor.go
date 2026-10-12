@@ -157,6 +157,16 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 	if a.ClientMode == ClientModeApiKey {
 		return channel.DoApiRequest(a, c, info, requestBody)
 	} else {
+		if info.TokenQuotaSource == service.BillingSourceCheckin {
+			request, err := http.NewRequest(http.MethodPost, "https://bedrock.invalid", requestBody)
+			if err != nil {
+				return nil, err
+			}
+			channel.ApplyUpstreamBodyMetadata(request, requestBody)
+			if err = service.ReserveCheckinOutbound(info, request); err != nil {
+				return nil, service.CheckinBillingError(err)
+			}
+		}
 		return doAwsClientRequest(c, info, a, requestBody)
 	}
 }

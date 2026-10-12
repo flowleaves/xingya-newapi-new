@@ -22,6 +22,7 @@ import {
   Wrench01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
+import { Sprout } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { StatusBadge } from '@/components/status-badge'
@@ -81,6 +82,7 @@ function ToolSurchargeMarker() {
 export function LogCostDisplay(props: LogCostDisplayProps) {
   const { t } = useTranslation()
   const isSubscription = props.other?.billing_source === 'subscription'
+  const isCheckin = props.other?.billing_source === 'checkin'
   const showToolSurcharge = hasToolSurcharge(props.other)
   const quota = isSubscription
     ? (props.other?.subscription_consumed ?? props.quota)
@@ -91,7 +93,9 @@ export function LogCostDisplay(props: LogCostDisplayProps) {
   // subscription may have expired since, and the viewer may hold no active
   // plan today. Only the wallet marker is contextual and follows
   // showBillingSource.
-  if (isSubscription) {
+  if (isCheckin) {
+    source = t('Check-in credit')
+  } else if (isSubscription) {
     source = t('Subscription')
   } else if (
     props.showBillingSource &&
@@ -120,12 +124,19 @@ export function LogCostDisplay(props: LogCostDisplayProps) {
                     aria-label={source}
                     tabIndex={0}
                   >
-                    <HugeiconsIcon
-                      icon={isSubscription ? CrownIcon : Wallet01Icon}
-                      className='size-3.5'
-                      strokeWidth={2}
-                      aria-hidden='true'
-                    />
+                    {isCheckin ? (
+                      <Sprout
+                        className='text-primary size-3.5'
+                        aria-hidden='true'
+                      />
+                    ) : (
+                      <HugeiconsIcon
+                        icon={isSubscription ? CrownIcon : Wallet01Icon}
+                        className='size-3.5'
+                        strokeWidth={2}
+                        aria-hidden='true'
+                      />
+                    )}
                   </span>
                 }
               />

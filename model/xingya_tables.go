@@ -30,6 +30,9 @@ func InitXingyaTables(db *gorm.DB) error {
 		&LogRefund{},
 		&XingyaInviteRewardPending{},
 		&XingyaRegistrationDevice{},
+		&XingyaCheckinWallet{},
+		&XingyaCheckinGrant{},
+		&XingyaCheckinSpend{},
 	} {
 		if db.Migrator().HasTable(table) {
 			continue
@@ -42,7 +45,7 @@ func InitXingyaTables(db *gorm.DB) error {
 		return err
 	}
 	xingyaTablesReady.Store(true)
-	return nil
+	return migrateInviteSpend080(db)
 }
 
 // migrateXingyaTables performs additive upgrades for existing Xingya-owned tables.
@@ -60,7 +63,7 @@ func migrateXingyaTables(db *gorm.DB) error {
 	}
 
 	device := &XingyaRegistrationDevice{}
-	for _, column := range []string{"UaBucketHash"} {
+	for _, column := range []string{"UaBucketHash", "ClientIP"} {
 		if db.Migrator().HasColumn(device, column) {
 			continue
 		}
@@ -73,6 +76,7 @@ func migrateXingyaTables(db *gorm.DB) error {
 		"idx_xingya_invite_reward_state_auto_grant",
 		"idx_xingya_invite_reward_inviter",
 		"idx_xingya_regdev_ip_ua_time",
+		"idx_xingya_regdev_registration_time",
 	} {
 		var value any
 		switch index {
