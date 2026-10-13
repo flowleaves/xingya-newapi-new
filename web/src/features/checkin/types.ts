@@ -68,6 +68,8 @@ export interface XingyaCheckinSettings {
   spend_enabled: boolean
   min_reward: number
   max_reward: number
+  consume_threshold: number
+  fixed_reward: number
   group: string
   revision: number
 }

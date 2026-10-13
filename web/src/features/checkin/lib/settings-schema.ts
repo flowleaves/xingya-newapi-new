@@ -26,12 +26,20 @@ export function checkinSettingsSchema(t: (key: string) => string) {
       spend_enabled: z.boolean(),
       min_reward: amount,
       max_reward: amount,
+      consume_threshold: amount,
+      fixed_reward: amount,
       group: z.string(),
       revision: z.number().int().nonnegative(),
     })
     .refine((s) => s.min_reward <= s.max_reward, {
       path: ['max_reward'],
       message: t('The maximum must be at least the minimum.'),
+    })
+    .refine((s) => s.consume_threshold === 0 || s.fixed_reward > 0, {
+      path: ['fixed_reward'],
+      message: t(
+        'Fixed check-in reward must be positive when the spending threshold is enabled.'
+      ),
     })
     .refine(
       (s) =>

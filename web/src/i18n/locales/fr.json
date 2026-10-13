@@ -7545,6 +7545,12 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Cumulative spending threshold (sprouts)": "Seuil de consommation cumulée (pousses)",
+    "Fixed daily reward after threshold (sprouts)": "Récompense quotidienne fixe après le seuil (pousses)",
+    "At or above this threshold, daily claims use the fixed reward. Below it, the random range applies. Set 0 to disable.": "À partir de ce seuil, les demandes quotidiennes donnent la récompense fixe. En dessous, la plage aléatoire reste applicable. Définir 0 pour désactiver.",
+    "Uses cumulative non-check-in consumption minus self-refunded amounts. Historical consumption counts; check-in spending does not.": "Utilise la consommation cumulée hors crédits de présence, moins les remboursements en libre-service. La consommation historique compte ; les crédits de présence ne comptent pas.",
+    "Fixed check-in reward must be positive when the spending threshold is enabled.": "La récompense fixe doit être positive lorsque le seuil est activé.",
+    "Invalid refunded check-in qualifying spend.": "Montant remboursé invalide pour le calcul du seuil."
   }
 }

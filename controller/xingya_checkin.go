@@ -28,6 +28,11 @@ func GetXingyaCheckinStatus(c *gin.Context) {
 		return
 	}
 	userID := c.GetInt("id")
+	minimum, maximum, err := model.XingyaCheckinRewardRange(model.DB, userID, s)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	balance, err := model.GetXingyaCheckinBalance(userID)
 	if err != nil {
 		common.ApiError(c, err)
@@ -105,7 +110,7 @@ func GetXingyaCheckinStatus(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, gin.H{"today": today, "today_record": todayRecord, "month": month, "records": records, "month_quota": monthQuota, "wallet": balance.Wallet, "expiry": balance.Expiry,
-		"claim_enabled": s.ClaimEnabled, "spend_enabled": s.SpendEnabled, "min_reward": s.MinReward, "max_reward": s.MaxReward, "group": s.Group,
+		"claim_enabled": s.ClaimEnabled, "spend_enabled": s.SpendEnabled, "min_reward": minimum, "max_reward": maximum, "group": s.Group,
 		"group_accessible": service.IsUserSelectableGroup(group, s.Group), "pending_review": pending})
 }
 
@@ -191,7 +196,7 @@ func UpdateXingyaCheckinSettings(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	recordManageAudit(c, "checkin.settings.update", map[string]any{"group": s.Group, "revision": s.Revision, "claim_enabled": s.ClaimEnabled, "spend_enabled": s.SpendEnabled, "min_reward": s.MinReward, "max_reward": s.MaxReward})
+	recordManageAudit(c, "checkin.settings.update", map[string]any{"group": s.Group, "revision": s.Revision, "claim_enabled": s.ClaimEnabled, "spend_enabled": s.SpendEnabled, "min_reward": s.MinReward, "max_reward": s.MaxReward, "consume_threshold": s.ConsumeThreshold, "fixed_reward": s.FixedReward})
 	common.ApiSuccess(c, s)
 }
 

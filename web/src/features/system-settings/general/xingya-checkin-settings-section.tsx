@@ -66,6 +66,8 @@ export function XingyaCheckinSettingsSection() {
       spend_enabled: false,
       min_reward: 0,
       max_reward: 0,
+      consume_threshold: 5000,
+      fixed_reward: 30,
       group: '',
       revision: 0,
     },
@@ -149,6 +151,60 @@ export function XingyaCheckinSettingsSection() {
             render={({ field }) => (
               <FormItem>
                 <FormLabel>{t('Daily maximum (sprouts)')}</FormLabel>
+                <FormControl>
+                  <Input
+                    type='number'
+                    inputMode='decimal'
+                    step='0.01'
+                    min='0'
+                    max='100000'
+                    {...field}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name='consume_threshold'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>
+                  {t('Cumulative spending threshold (sprouts)')}
+                </FormLabel>
+                <FormControl>
+                  <Input
+                    type='number'
+                    inputMode='decimal'
+                    step='0.01'
+                    min='0'
+                    max='100000'
+                    {...field}
+                  />
+                </FormControl>
+                <FormDescription>
+                  {t(
+                    'At or above this threshold, daily claims use the fixed reward. Below it, the random range applies. Set 0 to disable.'
+                  )}
+                </FormDescription>
+                <FormDescription>
+                  {t(
+                    'Uses cumulative non-check-in consumption minus self-refunded amounts. Historical consumption counts; check-in spending does not.'
+                  )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name='fixed_reward'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>
+                  {t('Fixed daily reward after threshold (sprouts)')}
+                </FormLabel>
                 <FormControl>
                   <Input
                     type='number'

@@ -7545,6 +7545,12 @@
     "Zhipu": "智譜",
     "Zhipu GLM": "智譜GLM",
     "Zhipu V4": "智譜 V4",
-    "Zoom": "縮放"
+    "Zoom": "縮放",
+    "Cumulative spending threshold (sprouts)": "累計消費門檻（芽點）",
+    "Fixed daily reward after threshold (sprouts)": "達標後每日固定獎勵（芽點）",
+    "At or above this threshold, daily claims use the fixed reward. Below it, the random range applies. Set 0 to disable.": "累計消費達到門檻後，每日領取固定獎勵；未達門檻仍使用隨機區間。設為 0 可關閉此規則。",
+    "Uses cumulative non-check-in consumption minus self-refunded amounts. Historical consumption counts; check-in spending does not.": "按非簽到累計消費減去自助補回金額計算。歷史消費計入，簽到額度消費不計入。",
+    "Fixed check-in reward must be positive when the spending threshold is enabled.": "啟用累計消費門檻時，固定簽到獎勵必須大於 0。",
+    "Invalid refunded check-in qualifying spend.": "簽到資格消費的補回金額異常。"
   }
 }

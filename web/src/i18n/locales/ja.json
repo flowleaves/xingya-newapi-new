@@ -7545,6 +7545,12 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム"
+    "Zoom": "ズーム",
+    "Cumulative spending threshold (sprouts)": "累計利用額の条件（芽ポイント）",
+    "Fixed daily reward after threshold (sprouts)": "条件達成後の毎日の固定報酬（芽ポイント）",
+    "At or above this threshold, daily claims use the fixed reward. Below it, the random range applies. Set 0 to disable.": "累計利用額が条件以上になると毎日の報酬が固定になります。未達の場合はランダム範囲を使用します。0で無効にできます。",
+    "Uses cumulative non-check-in consumption minus self-refunded amounts. Historical consumption counts; check-in spending does not.": "チェックイン以外の累計利用額からセルフ返金額を差し引きます。過去の利用は含まれ、チェックイン残高の利用は含まれません。",
+    "Fixed check-in reward must be positive when the spending threshold is enabled.": "利用額の条件を有効にする場合、固定報酬は0より大きくしてください。",
+    "Invalid refunded check-in qualifying spend.": "チェックイン条件の返金額が不正です。"
   }
 }

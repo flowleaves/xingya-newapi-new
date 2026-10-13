@@ -7545,6 +7545,12 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Cumulative spending threshold (sprouts)": "Ngưỡng chi tiêu tích lũy (mầm)",
+    "Fixed daily reward after threshold (sprouts)": "Thưởng cố định mỗi ngày sau khi đạt ngưỡng (mầm)",
+    "At or above this threshold, daily claims use the fixed reward. Below it, the random range applies. Set 0 to disable.": "Khi đạt ngưỡng, nhận thưởng cố định mỗi ngày. Dưới ngưỡng vẫn dùng khoảng ngẫu nhiên. Đặt 0 để tắt.",
+    "Uses cumulative non-check-in consumption minus self-refunded amounts. Historical consumption counts; check-in spending does not.": "Tính chi tiêu tích lũy không dùng tín dụng điểm danh, trừ số tiền tự hoàn. Chi tiêu trước đây được tính; chi tiêu tín dụng điểm danh không được tính.",
+    "Fixed check-in reward must be positive when the spending threshold is enabled.": "Thưởng điểm danh cố định phải lớn hơn 0 khi bật ngưỡng chi tiêu.",
+    "Invalid refunded check-in qualifying spend.": "Số tiền hoàn để tính ngưỡng điểm danh không hợp lệ."
   }
 }

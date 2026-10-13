@@ -32,6 +32,7 @@ import { api } from '@/lib/api'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { XingyaCheckinCard } from '../components/xingya-checkin-card'
+import { checkinSettingsSchema } from '../lib/settings-schema'
 import type { XingyaCheckinSettings, XingyaCheckinStatus } from '../types'
 
 function fixture(): XingyaCheckinStatus {
@@ -265,6 +266,8 @@ test('loaded settings populate the form and a complete save uses the newest revi
     spend_enabled: true,
     min_reward: 1.2,
     max_reward: 2.8,
+    consume_threshold: 5000,
+    fixed_reward: 30,
     group: 'checkin-fixture',
     revision: 1,
   }
@@ -300,14 +303,28 @@ test('loaded settings populate the form and a complete save uses the newest revi
     screen.getByRole('switch', { name: 'Allow daily claims' })
   ).toBeChecked()
   expect(screen.getByText('Credit validity · fixed 30 days')).toBeVisible()
+  const threshold = screen.getByLabelText(
+    'Cumulative spending threshold (sprouts)'
+  )
+  const fixed = screen.getByLabelText(
+    'Fixed daily reward after threshold (sprouts)'
+  )
+  expect(threshold).toHaveValue(5000)
+  expect(fixed).toHaveValue(30)
   const user = userEvent.setup()
   await user.clear(minimum)
   await user.type(minimum, '1.5')
+  await user.clear(threshold)
+  await user.type(threshold, '6000')
+  await user.clear(fixed)
+  await user.type(fixed, '35')
   await user.click(screen.getByRole('button', { name: 'Save Changes' }))
   await waitFor(() =>
     expect(put).toHaveBeenCalledWith('/api/xingya/checkin/settings', {
       ...settings,
       min_reward: 1.5,
+      consume_threshold: 6000,
+      fixed_reward: 35,
       revision: 1,
     })
   )
@@ -315,6 +332,37 @@ test('loaded settings populate the form and a complete save uses the newest revi
     expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled()
   )
   expect(minimum).toHaveValue(1.5)
+  expect(threshold).toHaveValue(6000)
+  expect(fixed).toHaveValue(35)
+})
+
+test('fixed reward validation rejects enabled zero rewards and invalid amounts', () => {
+  const schema = checkinSettingsSchema((key) => key)
+  const settings = {
+    claim_enabled: true,
+    spend_enabled: true,
+    min_reward: 1,
+    max_reward: 2,
+    consume_threshold: 5000,
+    fixed_reward: 30,
+    group: 'checkin-fixture',
+    revision: 1,
+  }
+  expect(schema.safeParse(settings).success).toBe(true)
+  expect(schema.safeParse({ ...settings, fixed_reward: 0 }).success).toBe(false)
+  expect(
+    schema.safeParse({ ...settings, consume_threshold: 0, fixed_reward: 0 })
+      .success
+  ).toBe(true)
+  expect(schema.safeParse({ ...settings, consume_threshold: -1 }).success).toBe(
+    false
+  )
+  expect(schema.safeParse({ ...settings, fixed_reward: 100001 }).success).toBe(
+    false
+  )
+  expect(
+    schema.safeParse({ ...settings, consume_threshold: 5000.001 }).success
+  ).toBe(false)
 })
 
 test('the shared card shows upcoming expiry and opens reconciled totals with the opening deadline', async () => {

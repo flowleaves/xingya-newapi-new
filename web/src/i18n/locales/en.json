@@ -7545,6 +7545,12 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Cumulative spending threshold (sprouts)": "Cumulative spending threshold (sprouts)",
+    "Fixed daily reward after threshold (sprouts)": "Fixed daily reward after threshold (sprouts)",
+    "At or above this threshold, daily claims use the fixed reward. Below it, the random range applies. Set 0 to disable.": "At or above this threshold, daily claims use the fixed reward. Below it, the random range applies. Set 0 to disable.",
+    "Uses cumulative non-check-in consumption minus self-refunded amounts. Historical consumption counts; check-in spending does not.": "Uses cumulative non-check-in consumption minus self-refunded amounts. Historical consumption counts; check-in spending does not.",
+    "Fixed check-in reward must be positive when the spending threshold is enabled.": "Fixed check-in reward must be positive when the spending threshold is enabled.",
+    "Invalid refunded check-in qualifying spend.": "Invalid refunded check-in qualifying spend."
   }
 }

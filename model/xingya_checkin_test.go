@@ -83,6 +83,78 @@ func TestXingyaCheckinPostgres(t *testing.T) {
 		require.NoError(t, err)
 		return current
 	}
+	t.Run("fixed reward uses net cumulative spend and preserves one award per day", func(t *testing.T) {
+		s := setConfig(2, 2)
+		s.ConsumeThreshold, s.FixedReward = 5000, 30
+		s, err := SaveXingyaCheckinSettings(s)
+		require.NoError(t, err)
+		threshold, err := CheckinRewardQuota(5000)
+		require.NoError(t, err)
+		fixed, err := CheckinRewardQuota(30)
+		require.NoError(t, err)
+		random, err := CheckinRewardQuota(2)
+		require.NoError(t, err)
+		for _, tc := range []struct {
+			name   string
+			used   int
+			refund int
+			want   int
+		}{
+			{"below threshold", threshold - 1, 0, random},
+			{"exact threshold", threshold, 0, fixed},
+			{"above threshold", threshold + 1, 0, fixed},
+			{"refund drops below threshold", threshold, 1, random},
+			{"net threshold after refund", threshold + 1, 1, fixed},
+			{"refund exceeds persisted usage", 0, 1, random},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				user := newUser()
+				require.NoError(t, DB.Model(&user).Update("used_quota", tc.used).Error)
+				// A large free wallet must not qualify as ordinary consumption.
+				credit(user.Id, threshold)
+				if tc.refund > 0 {
+					row := Log{UserId: user.Id, Type: LogTypeConsume, RequestId: common.NewRequestId(), Quota: tc.refund}
+					require.NoError(t, LOG_DB.Create(&row).Error)
+					require.NoError(t, DB.Create(&LogRefund{UserId: user.Id, LogId: row.Id, FundingSource: "wallet", BaseQuota: tc.refund, Quota: tc.refund, RequestId: row.RequestId}).Error)
+				}
+				minimum, maximum, err := XingyaCheckinRewardRange(DB, user.Id, s)
+				require.NoError(t, err)
+				assert.Equal(t, minimum, maximum)
+				preview, err := CheckinRewardQuota(minimum)
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, preview)
+				grant, already, err := ClaimXingyaCheckin(user.Id, time.Time{})
+				require.NoError(t, err)
+				assert.False(t, already)
+				assert.Equal(t, tc.want, grant.QuotaAwarded)
+				saved := *grant
+				// A later eligibility change must not redraw today's award.
+				require.NoError(t, DB.Model(&user).Update("used_quota", threshold*2).Error)
+				grant, already, err = ClaimXingyaCheckin(user.Id, time.Time{})
+				require.NoError(t, err)
+				assert.True(t, already)
+				assert.Equal(t, saved, *grant)
+				var lot XingyaCheckinCreditLot
+				require.NoError(t, DB.Where("grant_id = ?", saved.ID).Take(&lot).Error)
+				assert.Equal(t, saved.CreatedAt+int64(CheckinCreditLifetime/time.Second), lot.ExpiresAt)
+			})
+		}
+		s.ConsumeThreshold = 0
+		s, err = SaveXingyaCheckinSettings(s)
+		require.NoError(t, err)
+		user := newUser()
+		require.NoError(t, DB.Model(&user).Update("used_quota", threshold).Error)
+		grant, _, err := ClaimXingyaCheckin(user.Id, time.Time{})
+		require.NoError(t, err)
+		assert.Equal(t, random, grant.QuotaAwarded)
+		// Restore the configured gate for the remaining accounting regressions.
+		s.ConsumeThreshold, s.FixedReward = 5000, 30
+		s, err = SaveXingyaCheckinSettings(s)
+		require.NoError(t, err)
+		persisted, err := GetXingyaCheckinSettings()
+		require.NoError(t, err)
+		assert.Equal(t, s, persisted)
+	})
 	t.Run("a user without awards can read an empty wallet without creating credit", func(t *testing.T) {
 		user := newUser()
 		for range 2 {
@@ -553,4 +625,31 @@ func mustCheckinConfig(t *testing.T) XingyaCheckinSettings {
 	s, err := GetXingyaCheckinSettings()
 	require.NoError(t, err)
 	return s
+}
+
+func TestXingyaCheckinFixedRewardValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		threshold float64
+		reward    float64
+		valid     bool
+	}{
+		{"configured gate", 5000, 30, true},
+		{"disabled gate", 0, 0, true},
+		{"enabled gate requires positive reward", 5000, 0, false},
+		{"negative threshold", -1, 30, false},
+		{"fractional precision", 5000.001, 30, false},
+		{"nonfinite threshold", math.Inf(1), 30, false},
+		{"nonfinite reward", 5000, math.NaN(), false},
+		{"oversized reward", 5000, operation_setting.MaxCheckinRewardTier + 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateXingyaCheckinSettings(XingyaCheckinSettings{ConsumeThreshold: tc.threshold, FixedReward: tc.reward})
+			if tc.valid {
+				assert.NoError(t, err)
+			} else {
+				assert.Error(t, err)
+			}
+		})
+	}
 }

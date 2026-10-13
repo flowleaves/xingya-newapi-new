@@ -7545,6 +7545,12 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Cumulative spending threshold (sprouts)": "Порог суммарного расхода (ростки)",
+    "Fixed daily reward after threshold (sprouts)": "Фиксированная ежедневная награда после порога (ростки)",
+    "At or above this threshold, daily claims use the fixed reward. Below it, the random range applies. Set 0 to disable.": "При достижении порога ежедневная награда становится фиксированной. До порога действует случайный диапазон. Значение 0 отключает правило.",
+    "Uses cumulative non-check-in consumption minus self-refunded amounts. Historical consumption counts; check-in spending does not.": "Учитывается суммарный расход без средств отметки, за вычетом самостоятельных возвратов. Исторический расход учитывается, расход средств отметки — нет.",
+    "Fixed check-in reward must be positive when the spending threshold is enabled.": "При включённом пороге фиксированная награда должна быть больше 0.",
+    "Invalid refunded check-in qualifying spend.": "Некорректная сумма возвратов для расчёта порога."
   }
 }

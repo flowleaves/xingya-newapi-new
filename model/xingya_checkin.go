@@ -94,12 +94,14 @@ func resolveCheckinSpendAt(requestID string, updatedAt int64, action string, act
 }
 
 type XingyaCheckinSettings struct {
-	ClaimEnabled bool    `json:"claim_enabled"`
-	SpendEnabled bool    `json:"spend_enabled"`
-	MinReward    float64 `json:"min_reward"`
-	MaxReward    float64 `json:"max_reward"`
-	Group        string  `json:"group"`
-	Revision     int64   `json:"revision"`
+	ClaimEnabled     bool    `json:"claim_enabled"`
+	SpendEnabled     bool    `json:"spend_enabled"`
+	MinReward        float64 `json:"min_reward"`
+	MaxReward        float64 `json:"max_reward"`
+	ConsumeThreshold float64 `json:"consume_threshold"`
+	FixedReward      float64 `json:"fixed_reward"`
+	Group            string  `json:"group"`
+	Revision         int64   `json:"revision"`
 }
 
 // Settings are read together from the database, so every node observes a complete
@@ -111,13 +113,13 @@ func GetXingyaCheckinSettings() (XingyaCheckinSettings, error) {
 func readXingyaCheckinSettings(db *gorm.DB) (XingyaCheckinSettings, error) {
 	var rows []Option
 	keys := []string{}
-	for _, name := range []string{"claim_enabled", "spend_enabled", "min_reward", "max_reward", "group", "revision"} {
+	for _, name := range []string{"claim_enabled", "spend_enabled", "min_reward", "max_reward", "consume_threshold", "fixed_reward", "group", "revision"} {
 		keys = append(keys, checkinOptionPrefix+name)
 	}
 	if err := db.Where("key IN ?", keys).Find(&rows).Error; err != nil {
 		return XingyaCheckinSettings{}, err
 	}
-	s := XingyaCheckinSettings{}
+	s := XingyaCheckinSettings{ConsumeThreshold: 5000, FixedReward: 30}
 	for _, row := range rows {
 		var err error
 		switch strings.TrimPrefix(row.Key, checkinOptionPrefix) {
@@ -129,6 +131,10 @@ func readXingyaCheckinSettings(db *gorm.DB) (XingyaCheckinSettings, error) {
 			s.MinReward, err = strconv.ParseFloat(row.Value, 64)
 		case "max_reward":
 			s.MaxReward, err = strconv.ParseFloat(row.Value, 64)
+		case "consume_threshold":
+			s.ConsumeThreshold, err = strconv.ParseFloat(row.Value, 64)
+		case "fixed_reward":
+			s.FixedReward, err = strconv.ParseFloat(row.Value, 64)
 		case "group":
 			s.Group = row.Value
 		case "revision":
@@ -142,13 +148,16 @@ func readXingyaCheckinSettings(db *gorm.DB) (XingyaCheckinSettings, error) {
 }
 
 func ValidateXingyaCheckinSettings(s XingyaCheckinSettings) error {
-	for _, value := range []float64{s.MinReward, s.MaxReward} {
+	for _, value := range []float64{s.MinReward, s.MaxReward, s.ConsumeThreshold, s.FixedReward} {
 		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > operation_setting.MaxCheckinRewardTier || !decimal.NewFromFloat(value).Mul(decimal.NewFromInt(100)).IsInteger() {
 			return errors.New("奖励金额必须为上限内的非负数，最多两位小数")
 		}
 	}
 	if s.MinReward > s.MaxReward {
 		return errors.New("签到奖励下限不能高于上限")
+	}
+	if s.ConsumeThreshold > 0 && s.FixedReward <= 0 {
+		return errors.New("Fixed check-in reward must be positive when the spending threshold is enabled.")
 	}
 	if s.ClaimEnabled && (s.MinReward <= 0 || s.Group == "" || !s.SpendEnabled) {
 		return errors.New("启用领取前请配置正数奖励区间、分组并允许消费")
@@ -159,8 +168,12 @@ func ValidateXingyaCheckinSettings(s XingyaCheckinSettings) error {
 	if s.Revision < 0 || s.Revision == math.MaxInt64 {
 		return errors.New("签到配置版本无效")
 	}
-	_, err := CheckinRewardQuota(s.MaxReward)
-	return err
+	for _, value := range []float64{s.MaxReward, s.ConsumeThreshold, s.FixedReward} {
+		if _, err := CheckinRewardQuota(value); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func SaveXingyaCheckinSettings(s XingyaCheckinSettings) (XingyaCheckinSettings, error) {
@@ -194,6 +207,8 @@ func SaveXingyaCheckinSettings(s XingyaCheckinSettings) (XingyaCheckinSettings, 
 		}
 		s.Revision++
 		values := map[string]string{"claim_enabled": strconv.FormatBool(s.ClaimEnabled), "spend_enabled": strconv.FormatBool(s.SpendEnabled), "min_reward": strconv.FormatFloat(s.MinReward, 'f', 2, 64), "max_reward": strconv.FormatFloat(s.MaxReward, 'f', 2, 64), "group": s.Group, "revision": strconv.FormatInt(s.Revision, 10)}
+		values["consume_threshold"] = strconv.FormatFloat(s.ConsumeThreshold, 'f', 2, 64)
+		values["fixed_reward"] = strconv.FormatFloat(s.FixedReward, 'f', 2, 64)
 		for name, value := range values {
 			row := Option{Key: checkinOptionPrefix + name, Value: value}
 			if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "key"}}, DoUpdates: clause.AssignmentColumns([]string{"value"})}).Create(&row).Error; err != nil {
@@ -203,6 +218,36 @@ func SaveXingyaCheckinSettings(s XingyaCheckinSettings) (XingyaCheckinSettings, 
 		return nil
 	})
 	return s, err
+}
+
+// XingyaCheckinRewardRange uses persisted cumulative usage, which excludes
+// check-in spending, less self-refunded credit. It does not depend on retained
+// consume logs or cached counters. The claim caller holds the user's row lock,
+// serializing the eligibility decision against self-refund transactions.
+func XingyaCheckinRewardRange(db *gorm.DB, userID int, s XingyaCheckinSettings) (float64, float64, error) {
+	if s.ConsumeThreshold <= 0 {
+		return s.MinReward, s.MaxReward, nil
+	}
+	threshold, err := CheckinRewardQuota(s.ConsumeThreshold)
+	if err != nil {
+		return 0, 0, err
+	}
+	var user User
+	if err = db.Select("used_quota").First(&user, userID).Error; err != nil {
+		return 0, 0, err
+	}
+	var refunded int64
+	if err = db.Model(&LogRefund{}).Where("user_id = ?", userID).Select("COALESCE(SUM(quota), 0)").Scan(&refunded).Error; err != nil {
+		return 0, 0, err
+	}
+	if refunded < 0 {
+		return 0, 0, errors.New("Invalid refunded check-in qualifying spend.")
+	}
+	// Subtract only after proving the difference cannot underflow.
+	if int64(user.UsedQuota) >= refunded && int64(user.UsedQuota)-refunded >= int64(threshold) {
+		return s.FixedReward, s.FixedReward, nil
+	}
+	return s.MinReward, s.MaxReward, nil
 }
 
 func CheckinRewardQuota(reward float64) (int, error) {
@@ -351,8 +396,12 @@ func ClaimXingyaCheckin(userID int, now time.Time) (*XingyaCheckinGrant, bool, e
 		if s.MinReward <= 0 || s.MinReward > s.MaxReward || s.Group == "" || s.Group == "auto" {
 			return errors.New("签到设置未完成")
 		}
-		minCents := decimal.NewFromFloat(s.MinReward).Mul(decimal.NewFromInt(100)).IntPart()
-		maxCents := decimal.NewFromFloat(s.MaxReward).Mul(decimal.NewFromInt(100)).IntPart()
+		minimum, maximum, err := XingyaCheckinRewardRange(tx, userID, s)
+		if err != nil {
+			return err
+		}
+		minCents := decimal.NewFromFloat(minimum).Mul(decimal.NewFromInt(100)).IntPart()
+		maxCents := decimal.NewFromFloat(maximum).Mul(decimal.NewFromInt(100)).IntPart()
 		cents := minCents
 		if maxCents > minCents {
 			n, err := rand.Int(rand.Reader, big.NewInt(maxCents-minCents+1))
@@ -369,7 +418,7 @@ func ClaimXingyaCheckin(userID int, now time.Time) (*XingyaCheckinGrant, bool, e
 		if quota <= 0 || w.Granted > common.MaxWalletQuota-quota || w.Available > common.MaxWalletQuota-quota {
 			return errors.New("签到额度达到上限")
 		}
-		*grant = XingyaCheckinGrant{UserID: userID, CheckinDate: day, QuotaAwarded: quota, MinReward: s.MinReward, MaxReward: s.MaxReward, ConfigRevision: s.Revision, Group: s.Group, QuotaPerUnit: common.QuotaPerUnit, CreatedAt: now.Unix()}
+		*grant = XingyaCheckinGrant{UserID: userID, CheckinDate: day, QuotaAwarded: quota, MinReward: minimum, MaxReward: maximum, ConfigRevision: s.Revision, Group: s.Group, QuotaPerUnit: common.QuotaPerUnit, CreatedAt: now.Unix()}
 		if err = tx.Create(grant).Error; err != nil {
 			return err
 		}
