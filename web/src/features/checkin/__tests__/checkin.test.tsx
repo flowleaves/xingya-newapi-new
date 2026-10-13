@@ -23,7 +23,7 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, test, vi } from 'vitest'
 
@@ -419,4 +419,88 @@ test('a wallet without available expiring lots does not display a false expiry r
   expect(
     screen.queryByText(/Next expiry \(Beijing time\)/)
   ).not.toBeInTheDocument()
+})
+
+test('negative check-in balances and an extra daily round are visible', async () => {
+  const data = fixture()
+  data.wallet.available = -25000
+  data.wallet.borrowed = 25000
+  data.claim_round = 1
+  vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+    data: { success: true, data: url === '/api/status' ? {} : data },
+  }))
+  await renderCards()
+  expect(
+    screen.getByText('An extra check-in is available today.')
+  ).toBeVisible()
+  expect(
+    screen.getByText(
+      'Check-in balance can reach −10 sprouts. New rewards repay overdrafts first.'
+    )
+  ).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Check in now' })).toBeEnabled()
+  await userEvent.click(screen.getByRole('button', { name: 'Credit details' }))
+  expect(await screen.findByText('Check-in overdraft')).toBeVisible()
+})
+
+test('refresh confirmation retains its displayed round after a background refetch', async () => {
+  const settings: XingyaCheckinSettings = {
+    claim_enabled: true,
+    spend_enabled: true,
+    min_reward: 1,
+    max_reward: 2,
+    consume_threshold: 5000,
+    fixed_reward: 30,
+    group: 'checkin-fixture',
+    revision: 1,
+  }
+  const eligibility = { day: '2026-10-13', round: 0 }
+  let currentEligibility = eligibility
+  vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data:
+        url === '/api/xingya/checkin/reviews'
+          ? { items: [], total: 0 }
+          : {
+              settings,
+              eligibility: currentEligibility,
+              groups: { 'checkin-fixture': 1 },
+            },
+    },
+  }))
+  const post = vi.spyOn(api, 'post').mockImplementation(async () => ({
+    data: { success: true, data: { ...eligibility, round: 1 } },
+  }))
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <XingyaCheckinSettingsSection />
+    </QueryClientProvider>
+  )
+  const button = await screen.findByRole('button', {
+    name: 'Refresh today’s check-in eligibility',
+  })
+  await userEvent.click(button)
+  const dialog = await screen.findByRole('alertdialog')
+  expect(
+    within(dialog).getByText(/Existing rewards will be kept/)
+  ).toBeVisible()
+  expect(post).not.toHaveBeenCalled()
+  // Another administrator refreshed while this confirmation was open.
+  currentEligibility = { ...eligibility, round: 1 }
+  await act(() =>
+    client.invalidateQueries({ queryKey: ['xingya-checkin-settings'] })
+  )
+  await userEvent.click(
+    within(dialog).getByRole('button', { name: 'Allow one more check-in' })
+  )
+  await waitFor(() =>
+    expect(post).toHaveBeenCalledExactlyOnceWith(
+      '/api/xingya/checkin/eligibility/refresh',
+      eligibility
+    )
+  )
 })

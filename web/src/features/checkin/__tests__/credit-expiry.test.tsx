@@ -18,9 +18,13 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { expect, test, vi } from 'vitest'
+import { beforeEach, expect, test, vi } from 'vitest'
 
 import { toIntlLocale } from '@/i18n/languages'
+import {
+  DEFAULT_CURRENCY_CONFIG,
+  useSystemConfigStore,
+} from '@/stores/system-config-store'
 
 import { CheckinHistory } from '../components/checkin-history'
 import { formatCheckinDeadline } from '../lib/credit-expiry'
@@ -28,12 +32,18 @@ import type { CheckinAward } from '../types'
 
 const expires = Date.parse('2026-11-04T02:03:04Z') / 1000
 
-async function selectAward(record: CheckinAward) {
+beforeEach(() => {
+  useSystemConfigStore.getState().setConfig({
+    currency: { ...DEFAULT_CURRENCY_CONFIG },
+  })
+})
+
+async function selectAward(record: CheckinAward | CheckinAward[]) {
   render(
     <CheckinHistory
       month='2026-10'
       today='2026-10-12'
-      records={[record]}
+      records={Array.isArray(record) ? record : [record]}
       onMonthChange={vi.fn()}
     />
   )
@@ -108,6 +118,38 @@ test('legacy ordinary-balance rewards do not acquire check-in expiry or batch am
       /Expires at|Expired check-in credit|Available check-in credit/
     )
   ).not.toBeInTheDocument()
+})
+
+test('an extra claim keeps every reward and its source visible on the same calendar date', async () => {
+  const dialog = await selectAward([
+    {
+      id: 1,
+      claim_round: 0,
+      checkin_date: '2026-10-05',
+      quota_awarded: 5000,
+      source: 'checkin',
+    },
+    {
+      id: 2,
+      claim_round: 1,
+      checkin_date: '2026-10-05',
+      quota_awarded: 10000,
+      source: 'checkin',
+    },
+    {
+      checkin_date: '2026-10-05',
+      quota_awarded: 15000,
+      source: 'legacy',
+    },
+  ])
+  for (const value of ['$0.01', '$0.02', '$0.03']) {
+    expect(within(dialog).getByText(value)).toBeVisible()
+  }
+  expect(within(dialog).getByText('Extra check-in reward')).toBeVisible()
+  expect(within(dialog).getAllByText('Check-in credit')).toHaveLength(2)
+  expect(
+    within(dialog).getByText('Legacy check-in · ordinary balance')
+  ).toBeVisible()
 })
 
 test.each(['zhCN', 'zhTW', 'en', 'fr', 'ja', 'ru', 'vi'])(

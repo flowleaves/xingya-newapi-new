@@ -7551,6 +7551,21 @@
     "At or above this threshold, daily claims use the fixed reward. Below it, the random range applies. Set 0 to disable.": "累計消費達到門檻後，每日領取固定獎勵；未達門檻仍使用隨機區間。設為 0 可關閉此規則。",
     "Uses cumulative non-check-in consumption minus self-refunded amounts. Historical consumption counts; check-in spending does not.": "按非簽到累計消費減去自助補回金額計算。歷史消費計入，簽到額度消費不計入。",
     "Fixed check-in reward must be positive when the spending threshold is enabled.": "啟用累計消費門檻時，固定簽到獎勵必須大於 0。",
-    "Invalid refunded check-in qualifying spend.": "簽到資格消費的補回金額異常。"
+    "Invalid refunded check-in qualifying spend.": "簽到資格消費的補回金額異常。",
+    "An extra check-in is available today.": "今天已開放一次額外簽到。",
+    "Extra check-in reward": "額外簽到獎勵",
+    "Check-in balance can reach −10 sprouts. New rewards repay overdrafts first.": "簽到餘額最低可至 −10 芽點，新獎勵優先償還透支。",
+    "Check-in overdraft": "簽到透支",
+    "Separate check-in balance": "獨立簽到餘額",
+    "Create the check-in group normally, then select it here. Changing the group moves dedicated keys; existing credit and expiry dates are retained. Native token and request pricing are supported.": "按一般流程建立群組後在此選擇。切換會同步遷移簽到專用金鑰，已有額度及到期時間保留；支援按 token、按次及混合定價。",
+    "Let everyone check in once more today. Issued rewards are retained; the normal daily limit resumes tomorrow.": "重新整理後所有使用者今天可再簽到一次，已發獎勵保留；明天恢復每日一次。",
+    "Refresh today’s check-in eligibility": "重新整理今日簽到資格",
+    "Every user can claim one extra reward today, including users who have already checked in. Existing rewards will be kept. This action cannot be undone.": "操作後所有使用者今天可再領取一次，包括已簽到者。已發獎勵保留，此操作無法復原。",
+    "Allow one more check-in": "允許再簽到一次",
+    "Today’s check-in eligibility refreshed": "今日簽到資格已重新整理",
+    "Check-in balance after this request": "本次結算後簽到餘額",
+    "Unpaid check-in cost · pending review": "未付簽到費用 · 待核對",
+    "Invalid check-in eligibility record.": "簽到資格記錄異常。",
+    "Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "簽到按北京時間計算每日資格，管理員可開放當日額外領取。專用金鑰使用後台指定群組及其模型定價。舊簽到獎勵保留在一般餘額中，簽到消費不計入邀請達標。"
   }
 }

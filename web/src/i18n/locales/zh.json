@@ -7551,6 +7551,21 @@
     "At or above this threshold, daily claims use the fixed reward. Below it, the random range applies. Set 0 to disable.": "累计消费达到门槛后，每日领取固定奖励；未达门槛仍使用随机区间。设为 0 可关闭此规则。",
     "Uses cumulative non-check-in consumption minus self-refunded amounts. Historical consumption counts; check-in spending does not.": "按非签到累计消费减去自助补回金额计算。历史消费计入，签到额度消费不计入。",
     "Fixed check-in reward must be positive when the spending threshold is enabled.": "启用累计消费门槛时，固定签到奖励必须大于 0。",
-    "Invalid refunded check-in qualifying spend.": "签到资格消费的补回金额异常。"
+    "Invalid refunded check-in qualifying spend.": "签到资格消费的补回金额异常。",
+    "An extra check-in is available today.": "今天已开放一次额外签到。",
+    "Extra check-in reward": "额外签到奖励",
+    "Check-in balance can reach −10 sprouts. New rewards repay overdrafts first.": "签到余额最低可至 −10 芽点，新奖励优先偿还透支。",
+    "Check-in overdraft": "签到透支",
+    "Separate check-in balance": "独立签到余额",
+    "Create the check-in group normally, then select it here. Changing the group moves dedicated keys; existing credit and expiry dates are retained. Native token and request pricing are supported.": "按普通流程创建分组后在此选择。切换会同步迁移签到专用密钥，已有额度及到期时间保留；支持按 token、按次及混合定价。",
+    "Let everyone check in once more today. Issued rewards are retained; the normal daily limit resumes tomorrow.": "刷新后所有用户今天可再签到一次，已发奖励保留；明天恢复每日一次。",
+    "Refresh today’s check-in eligibility": "刷新今日签到资格",
+    "Every user can claim one extra reward today, including users who have already checked in. Existing rewards will be kept. This action cannot be undone.": "操作后所有用户今天可再领取一次，包括已签到用户。已发奖励保留，此操作不可撤销。",
+    "Allow one more check-in": "允许再签到一次",
+    "Today’s check-in eligibility refreshed": "今日签到资格已刷新",
+    "Check-in balance after this request": "本次结算后签到余额",
+    "Unpaid check-in cost · pending review": "未付签到费用 · 待核对",
+    "Invalid check-in eligibility record.": "签到资格记录异常。",
+    "Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "签到按北京时间计算每日资格，管理员可开放当日额外领取。专用密钥使用后台指定分组及其模型定价。旧签到奖励保留在普通余额中，签到消费不计入邀请达标。"
   }
 }

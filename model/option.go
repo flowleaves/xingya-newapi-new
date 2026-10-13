@@ -231,7 +231,7 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
-	if strings.HasPrefix(key, checkinOptionPrefix) || strings.HasPrefix(key, "xingya_migration.") {
+	if key == checkinEligibilityKey || strings.HasPrefix(key, checkinOptionPrefix) || strings.HasPrefix(key, "xingya_migration.") {
 		return errors.New("请使用专用签到设置接口；迁移标记不可修改")
 	}
 	if key == legacyAccessTokenRetireAtKey {

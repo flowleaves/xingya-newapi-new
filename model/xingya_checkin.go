@@ -20,6 +20,10 @@ import (
 
 const CheckinQuotaSource = "checkin"
 const checkinOptionPrefix = "xingya_checkin_setting."
+const checkinEligibilityKey = "xingya_checkin_eligibility"
+
+// Internal quota still uses the existing USD conversion (100 sprouts per USD).
+func CheckinOverdraftLimit() (int, error) { return CheckinRewardQuota(10) }
 
 var (
 	ErrCheckinInsufficient   = errors.New("签到额度不足，请切换普通密钥 / Check-in credit is insufficient; switch to a regular key")
@@ -82,9 +86,15 @@ func resolveCheckinSpendAt(requestID string, updatedAt int64, action string, act
 			if action == "release" {
 				spend.State = "released"
 			}
-			if err = tx.Save(wallet).Error; err != nil {
+			spend.UpdatedAt = at
+			spend.BalanceAfter = new(wallet.Available)
+			if err = tx.Save(&spend).Error; err != nil {
 				return err
 			}
+			if err = repayAvailableCheckinBorrowing(tx, wallet); err != nil {
+				return err
+			}
+			return tx.Save(wallet).Error
 		} else {
 			return errors.New("该记录当前不允许此核对操作")
 		}
@@ -102,6 +112,66 @@ type XingyaCheckinSettings struct {
 	FixedReward      float64 `json:"fixed_reward"`
 	Group            string  `json:"group"`
 	Revision         int64   `json:"revision"`
+}
+
+// Eligibility is a daily round, not a deletion of already-paid grants. The
+// revision row serializes refreshes with claims and configuration changes.
+type XingyaCheckinEligibility struct {
+	Day   string `json:"day"`
+	Round int64  `json:"round"`
+}
+
+func GetXingyaCheckinEligibility(db *gorm.DB, day string) (XingyaCheckinEligibility, error) {
+	current := XingyaCheckinEligibility{Day: day}
+	var option Option
+	if err := db.Where("key = ?", checkinEligibilityKey).Take(&option).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		return current, nil
+	} else if err != nil {
+		return current, err
+	}
+	var saved XingyaCheckinEligibility
+	if err := common.UnmarshalJsonStr(option.Value, &saved); err != nil || saved.Round < 0 {
+		return current, errors.New("Invalid check-in eligibility record.")
+	}
+	if saved.Day == day {
+		return saved, nil
+	}
+	return current, nil
+}
+
+func RefreshXingyaCheckinEligibility(expected XingyaCheckinEligibility, now time.Time) (XingyaCheckinEligibility, error) {
+	var result XingyaCheckinEligibility
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		revision := Option{Key: checkinOptionPrefix + "revision", Value: "0"}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&revision).Error; err != nil {
+			return err
+		}
+		if err := lockForUpdate(tx).Where("key = ?", revision.Key).Take(&revision).Error; err != nil {
+			return err
+		}
+		if now.IsZero() {
+			now = time.Now()
+		}
+		current, err := GetXingyaCheckinEligibility(tx, CheckinBusinessTime(now).Format("2006-01-02"))
+		if err != nil {
+			return err
+		}
+		if current != expected {
+			return ErrCheckinConfigConflict
+		}
+		if current.Round == math.MaxInt64 {
+			return errors.New("Invalid check-in eligibility record.")
+		}
+		result = current
+		result.Round++
+		raw, err := common.Marshal(result)
+		if err != nil {
+			return err
+		}
+		option := Option{Key: checkinEligibilityKey, Value: string(raw)}
+		return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "key"}}, DoUpdates: clause.AssignmentColumns([]string{"value"})}).Create(&option).Error
+	})
+	return result, err
 }
 
 // Settings are read together from the database, so every node observes a complete
@@ -181,6 +251,7 @@ func SaveXingyaCheckinSettings(s XingyaCheckinSettings) (XingyaCheckinSettings, 
 	if err := ValidateXingyaCheckinSettings(s); err != nil {
 		return s, err
 	}
+	var migratedTokens []Token
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		key := Option{Key: checkinOptionPrefix + "revision", Value: "0"}
 		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&key).Error; err != nil {
@@ -197,12 +268,17 @@ func SaveXingyaCheckinSettings(s XingyaCheckinSettings) (XingyaCheckinSettings, 
 			return ErrCheckinConfigConflict
 		}
 		if current.Group != "" && current.Group != s.Group {
-			var count int64
-			if err := tx.Model(&XingyaCheckinGrant{}).Count(&count).Error; err != nil {
+			if s.Group == "" {
+				return errors.New("请选择固定分组")
+			}
+			if err := tx.Select("id", "key").Where("quota_source = ?", CheckinQuotaSource).Find(&migratedTokens).Error; err != nil {
 				return err
 			}
-			if count > 0 {
-				return errors.New("已有签到入账，不能直接更换固定分组")
+			if err := invalidateTokensCache(migratedTokens); err != nil {
+				return err
+			}
+			if err := tx.Model(&Token{}).Where("quota_source = ?", CheckinQuotaSource).Update("group", s.Group).Error; err != nil {
+				return err
 			}
 		}
 		s.Revision++
@@ -217,6 +293,11 @@ func SaveXingyaCheckinSettings(s XingyaCheckinSettings) (XingyaCheckinSettings, 
 		}
 		return nil
 	})
+	if err == nil {
+		if cacheErr := invalidateTokensCache(migratedTokens); cacheErr != nil {
+			common.SysError("failed to invalidate migrated checkin token caches: " + cacheErr.Error())
+		}
+	}
 	return s, err
 }
 
@@ -274,14 +355,16 @@ type XingyaCheckinWallet struct {
 	Granted   int `json:"granted" gorm:"type:bigint;not null;default:0"`
 	Consumed  int `json:"consumed" gorm:"type:bigint;not null;default:0"`
 	Expired   int `json:"expired" gorm:"type:bigint;not null;default:0"`
+	Borrowed  int `json:"borrowed" gorm:"type:bigint;not null;default:0"`
 }
 
 func (XingyaCheckinWallet) TableName() string { return "xingya_checkin_wallets" }
 
 type XingyaCheckinGrant struct {
 	ID             int     `json:"id" gorm:"primaryKey"`
-	UserID         int     `json:"-" gorm:"not null;uniqueIndex:idx_xingya_checkin_grant_day,priority:1"`
-	CheckinDate    string  `json:"checkin_date" gorm:"type:varchar(10);not null;uniqueIndex:idx_xingya_checkin_grant_day,priority:2"`
+	UserID         int     `json:"-" gorm:"not null;uniqueIndex:idx_xingya_checkin_grant_round,priority:1"`
+	CheckinDate    string  `json:"checkin_date" gorm:"type:varchar(10);not null;uniqueIndex:idx_xingya_checkin_grant_round,priority:2"`
+	ClaimRound     int64   `json:"claim_round" gorm:"type:bigint;not null;default:0;uniqueIndex:idx_xingya_checkin_grant_round,priority:3"`
 	QuotaAwarded   int     `json:"quota_awarded" gorm:"type:bigint;not null"`
 	MinReward      float64 `json:"-"`
 	MaxReward      float64 `json:"-"`
@@ -294,18 +377,21 @@ type XingyaCheckinGrant struct {
 func (XingyaCheckinGrant) TableName() string { return "xingya_checkin_grants" }
 
 type XingyaCheckinSpend struct {
-	RequestID   string `json:"request_id" gorm:"primaryKey;type:varchar(191)"`
-	UserID      int    `json:"user_id" gorm:"not null;index:idx_xingya_checkin_spend_user"`
-	TokenID     int    `json:"token_id"`
-	Group       string `json:"group"`
-	Model       string `json:"model"`
-	Reserved    int    `json:"reserved" gorm:"type:bigint"`
-	ActualQuota int    `json:"actual_quota" gorm:"type:bigint"`
-	Consumed    int    `json:"consumed" gorm:"type:bigint"`
-	UnpaidQuota int    `json:"unpaid_quota" gorm:"type:bigint"`
-	State       string `json:"state" gorm:"type:varchar(16);index:idx_xingya_checkin_spend_state"`
-	CreatedAt   int64  `json:"created_at" gorm:"type:bigint;autoCreateTime:false"`
-	UpdatedAt   int64  `json:"updated_at" gorm:"type:bigint;autoUpdateTime:false"`
+	RequestID        string `json:"request_id" gorm:"primaryKey;type:varchar(191)"`
+	UserID           int    `json:"user_id" gorm:"not null;index:idx_xingya_checkin_spend_user"`
+	TokenID          int    `json:"token_id"`
+	Group            string `json:"group"`
+	Model            string `json:"model"`
+	Reserved         int    `json:"reserved" gorm:"type:bigint"`
+	ActualQuota      int    `json:"actual_quota" gorm:"type:bigint"`
+	Consumed         int    `json:"consumed" gorm:"type:bigint"`
+	UnpaidQuota      int    `json:"unpaid_quota" gorm:"type:bigint"`
+	BorrowedReserved int    `json:"borrowed_reserved" gorm:"type:bigint;not null;default:0"`
+	BorrowedConsumed int    `json:"borrowed_consumed" gorm:"type:bigint;not null;default:0"`
+	BalanceAfter     *int   `json:"balance_after,omitempty" gorm:"type:bigint"`
+	State            string `json:"state" gorm:"type:varchar(16);index:idx_xingya_checkin_spend_state"`
+	CreatedAt        int64  `json:"created_at" gorm:"type:bigint;autoCreateTime:false"`
+	UpdatedAt        int64  `json:"updated_at" gorm:"type:bigint;autoUpdateTime:false"`
 }
 
 func (XingyaCheckinSpend) TableName() string { return "xingya_checkin_spends" }
@@ -316,8 +402,10 @@ func GetXingyaCheckinWallet(userID int) (XingyaCheckinWallet, error) {
 }
 
 func validCheckinWallet(w XingyaCheckinWallet) bool {
-	return w.Granted >= 0 && w.Granted <= common.MaxWalletQuota && w.Available >= 0 && w.Reserved >= 0 && w.Consumed >= 0 && w.Expired >= 0 &&
-		w.Available <= w.Granted && w.Reserved <= w.Granted-w.Available && w.Consumed <= w.Granted-w.Available-w.Reserved && w.Expired == w.Granted-w.Available-w.Reserved-w.Consumed
+	limit, err := CheckinOverdraftLimit()
+	return err == nil && w.Granted >= 0 && w.Granted <= common.MaxWalletQuota && w.Borrowed >= 0 && w.Borrowed <= limit && w.Available >= -w.Borrowed && w.Available <= common.MaxWalletQuota-w.Borrowed && w.Reserved >= 0 && w.Consumed >= 0 && w.Expired >= 0 &&
+		w.Reserved <= common.MaxWalletQuota && w.Consumed <= common.MaxWalletQuota && w.Expired <= common.MaxWalletQuota &&
+		w.Granted == w.Available+w.Reserved+w.Consumed+w.Expired
 }
 
 func lockCheckinWallet(tx *gorm.DB, userID int) (*XingyaCheckinWallet, error) {
@@ -368,23 +456,29 @@ func ClaimXingyaCheckin(userID int, now time.Time) (*XingyaCheckinGrant, bool, e
 			now = time.Now()
 		}
 		day := CheckinBusinessTime(now).Format("2006-01-02")
+		eligibility, err := GetXingyaCheckinEligibility(tx, day)
+		if err != nil {
+			return err
+		}
 		if err = expireCheckinCredit(tx, w, now.Unix()); err != nil {
 			return err
 		}
-		if err = tx.Where("user_id = ? AND checkin_date = ?", userID, day).Take(grant).Error; err == nil {
+		if err = tx.Where("user_id = ? AND checkin_date = ? AND claim_round = ?", userID, day, eligibility.Round).Take(grant).Error; err == nil {
 			already = true
 			return nil
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
 		var old Checkin
-		if err = tx.Where("user_id = ? AND checkin_date = ?", userID, day).Take(&old).Error; err == nil {
-			grant.CheckinDate = day
-			grant.QuotaAwarded = old.QuotaAwarded
-			already = true
-			return nil
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
+		if eligibility.Round == 0 {
+			if err = tx.Where("user_id = ? AND checkin_date = ?", userID, day).Take(&old).Error; err == nil {
+				grant.CheckinDate = day
+				grant.QuotaAwarded = old.QuotaAwarded
+				already = true
+				return nil
+			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
 		}
 		s, err := readXingyaCheckinSettings(tx)
 		if err != nil {
@@ -418,7 +512,7 @@ func ClaimXingyaCheckin(userID int, now time.Time) (*XingyaCheckinGrant, bool, e
 		if quota <= 0 || w.Granted > common.MaxWalletQuota-quota || w.Available > common.MaxWalletQuota-quota {
 			return errors.New("签到额度达到上限")
 		}
-		*grant = XingyaCheckinGrant{UserID: userID, CheckinDate: day, QuotaAwarded: quota, MinReward: minimum, MaxReward: maximum, ConfigRevision: s.Revision, Group: s.Group, QuotaPerUnit: common.QuotaPerUnit, CreatedAt: now.Unix()}
+		*grant = XingyaCheckinGrant{UserID: userID, CheckinDate: day, ClaimRound: eligibility.Round, QuotaAwarded: quota, MinReward: minimum, MaxReward: maximum, ConfigRevision: s.Revision, Group: s.Group, QuotaPerUnit: common.QuotaPerUnit, CreatedAt: now.Unix()}
 		if err = tx.Create(grant).Error; err != nil {
 			return err
 		}
@@ -428,6 +522,9 @@ func ClaimXingyaCheckin(userID int, now time.Time) (*XingyaCheckinGrant, bool, e
 		}
 		w.Available += quota
 		w.Granted += quota
+		if err = repayCheckinBorrowing(tx, w, &lot); err != nil {
+			return err
+		}
 		return tx.Save(w).Error
 	})
 	return grant, already, err
@@ -470,24 +567,22 @@ func reserveCheckinQuotaAt(spend XingyaCheckinSpend, target int, at int64) error
 		}
 		var unsettled int64
 		pending := tx.Model(&XingyaCheckinSpend{}).Where("user_id = ? AND (state = ? OR (state = ? AND updated_at < ?))", spend.UserID, "review", "reserved", at-24*60*60)
-		// A measured overcharge means this model's bound is no longer reliable.
-		// Pause it for all check-in keys until the operator verifies the evidence;
-		// unrelated models and ordinary funding keep their existing behavior.
-		if spend.Model != "" {
-			pending = pending.Or("model = ? AND state = ?", spend.Model, "review")
-		}
 		if err = pending.Count(&unsettled).Error; err != nil {
 			return err
 		}
-		if unsettled > 0 && target > spend.Reserved {
+		if unsettled > 0 && (existing.RequestID == "" || target > spend.Reserved) {
 			rejected = ErrCheckinReconciliation
 			return nil
 		}
 		delta := target - spend.Reserved
-		if w.Available < 0 || w.Reserved < 0 || delta > 0 && w.Reserved > common.MaxWalletQuota-delta {
+		if w.Reserved < 0 || delta > 0 && w.Reserved > common.MaxWalletQuota-delta {
 			return errors.New("签到钱包数据无效")
 		}
-		if delta > 0 && w.Available < delta {
+		limit, err := CheckinOverdraftLimit()
+		if err != nil {
+			return err
+		}
+		if delta > 0 && w.Available+limit < delta {
 			rejected = ErrCheckinInsufficient
 			return nil
 		}
@@ -546,6 +641,17 @@ func finalizeCheckinSpendAt(userID int, requestID string, actual int, release bo
 			charge = 0
 		}
 		paid := min(charge, spend.Reserved)
+		limit, err := CheckinOverdraftLimit()
+		if err != nil {
+			return err
+		}
+		if charge > spend.Reserved {
+			paid = min(charge, spend.Reserved+max(0, w.Available+limit))
+			if err = adjustCheckinAllocations(tx, w, &spend, paid, at); err != nil {
+				return err
+			}
+			spend.Reserved = paid
+		}
 		if w.Consumed > common.MaxWalletQuota-paid {
 			return errors.New("签到累计消费超过上限")
 		}
@@ -563,10 +669,14 @@ func finalizeCheckinSpendAt(userID int, requestID string, actual int, release bo
 			spend.State = "review"
 		}
 		spend.UpdatedAt = at
-		if err = tx.Save(w).Error; err != nil {
+		spend.BalanceAfter = new(w.Available)
+		if err = tx.Save(&spend).Error; err != nil {
 			return err
 		}
-		return tx.Save(&spend).Error
+		if err = repayAvailableCheckinBorrowing(tx, w); err != nil {
+			return err
+		}
+		return tx.Save(w).Error
 	})
 }
 

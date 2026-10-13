@@ -41,7 +41,7 @@ func GetXingyaCheckinStatus(c *gin.Context) {
 	from, to := start.Format("2006-01-02"), start.AddDate(0, 1, 0).Format("2006-01-02")
 	records := []gin.H{}
 	var grants []model.XingyaCheckinGrant
-	if err = model.DB.Where("user_id = ? AND checkin_date >= ? AND checkin_date < ?", userID, from, to).Order("checkin_date DESC").Find(&grants).Error; err != nil {
+	if err = model.DB.Where("user_id = ? AND checkin_date >= ? AND checkin_date < ?", userID, from, to).Order("checkin_date DESC, claim_round DESC").Find(&grants).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -62,7 +62,7 @@ func GetXingyaCheckinStatus(c *gin.Context) {
 		}
 	}
 	for _, grant := range grants {
-		record := gin.H{"checkin_date": grant.CheckinDate, "quota_awarded": grant.QuotaAwarded, "source": "checkin"}
+		record := gin.H{"id": grant.ID, "checkin_date": grant.CheckinDate, "claim_round": grant.ClaimRound, "quota_awarded": grant.QuotaAwarded, "source": "checkin"}
 		if lot, ok := lotsByGrant[grant.ID]; ok {
 			record["credit"] = lot
 		} else {
@@ -81,15 +81,20 @@ func GetXingyaCheckinStatus(c *gin.Context) {
 	}
 	// Today's award is queried separately from the selected history month.
 	today := now.Format("2006-01-02")
+	eligibility, err := model.GetXingyaCheckinEligibility(model.DB, today)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	todayRecord := gin.H{"checked_in": false, "quota_awarded": 0, "source": ""}
 	var todayNew []model.XingyaCheckinGrant
-	if err = model.DB.Where("user_id = ? AND checkin_date = ?", userID, today).Limit(1).Find(&todayNew).Error; err != nil {
+	if err = model.DB.Where("user_id = ? AND checkin_date = ? AND claim_round = ?", userID, today, eligibility.Round).Limit(1).Find(&todayNew).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	if len(todayNew) > 0 {
 		todayRecord = gin.H{"checked_in": true, "quota_awarded": todayNew[0].QuotaAwarded, "source": "checkin"}
-	} else {
+	} else if eligibility.Round == 0 {
 		var todayOld []model.Checkin
 		if err = model.DB.Where("user_id = ? AND checkin_date = ?", userID, today).Limit(1).Find(&todayOld).Error; err != nil {
 			common.ApiError(c, err)
@@ -111,7 +116,7 @@ func GetXingyaCheckinStatus(c *gin.Context) {
 	}
 	common.ApiSuccess(c, gin.H{"today": today, "today_record": todayRecord, "month": month, "records": records, "month_quota": monthQuota, "wallet": balance.Wallet, "expiry": balance.Expiry,
 		"claim_enabled": s.ClaimEnabled, "spend_enabled": s.SpendEnabled, "min_reward": minimum, "max_reward": maximum, "group": s.Group,
-		"group_accessible": service.IsUserSelectableGroup(group, s.Group), "pending_review": pending})
+		"group_accessible": service.IsUserSelectableGroup(group, s.Group), "pending_review": pending, "claim_round": eligibility.Round})
 }
 
 func ClaimXingyaDailyCredit(c *gin.Context) {
@@ -141,7 +146,7 @@ func ClaimXingyaDailyCredit(c *gin.Context) {
 	if !already {
 		model.RecordLog(c.GetInt("id"), model.LogTypeSystem, common.NewMessage("Check-in credit granted"))
 	}
-	common.ApiSuccess(c, gin.H{"checkin_date": grant.CheckinDate, "quota_awarded": grant.QuotaAwarded, "source": source, "already_claimed": already})
+	common.ApiSuccess(c, gin.H{"id": grant.ID, "checkin_date": grant.CheckinDate, "claim_round": grant.ClaimRound, "quota_awarded": grant.QuotaAwarded, "source": source, "already_claimed": already})
 }
 
 func CreateXingyaCheckinKey(c *gin.Context) {
@@ -174,7 +179,31 @@ func GetXingyaCheckinSettings(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, gin.H{"settings": s, "groups": ratio_setting.GetGroupRatioCopy()})
+	eligibility, err := model.GetXingyaCheckinEligibility(model.DB, model.CheckinBusinessTime(time.Now()).Format("2006-01-02"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"settings": s, "groups": ratio_setting.GetGroupRatioCopy(), "eligibility": eligibility})
+}
+
+func RefreshXingyaCheckinEligibility(c *gin.Context) {
+	var expected model.XingyaCheckinEligibility
+	if err := c.ShouldBindJSON(&expected); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	eligibility, err := model.RefreshXingyaCheckinEligibility(expected, time.Time{})
+	if errors.Is(err, model.ErrCheckinConfigConflict) {
+		c.JSON(http.StatusConflict, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	recordManageAudit(c, "checkin.eligibility.refresh", map[string]any{"day": eligibility.Day, "round": eligibility.Round})
+	common.ApiSuccess(c, eligibility)
 }
 
 func UpdateXingyaCheckinSettings(c *gin.Context) {

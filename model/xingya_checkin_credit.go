@@ -87,7 +87,7 @@ func getXingyaCheckinBalanceAt(userID int, at int64) (XingyaCheckinBalance, erro
 		}
 		available := 0
 		for _, lot := range lots {
-			if !validCheckinLot(lot) || lot.Available > wallet.Available-available {
+			if !validCheckinLot(lot) || lot.Available > wallet.Available+wallet.Borrowed-available {
 				return errors.New("签到批次对账不一致")
 			}
 			available += lot.Available
@@ -101,7 +101,7 @@ func getXingyaCheckinBalanceAt(userID int, at int64) (XingyaCheckinBalance, erro
 				result.Expiry.NextExpiringQuota += lot.Available
 			}
 		}
-		if available != wallet.Available {
+		if available != wallet.Available+wallet.Borrowed {
 			return errors.New("签到批次对账不一致")
 		}
 		var opening XingyaCheckinCreditLot
@@ -129,7 +129,7 @@ func expireCheckinCredit(tx *gorm.DB, wallet *XingyaCheckinWallet, now int64) er
 		return err
 	}
 	for _, lot := range lots {
-		if !validCheckinLot(lot) || lot.Available > wallet.Available {
+		if !validCheckinLot(lot) || lot.Available > wallet.Available+wallet.Borrowed {
 			return errors.New("签到过期金额对账不一致")
 		}
 		wallet.Available -= lot.Available
@@ -214,7 +214,7 @@ func validCheckinAllocation(a XingyaCheckinAllocation) bool {
 }
 
 func checkinAllocatedLots(tx *gorm.DB, wallet *XingyaCheckinWallet, spend *XingyaCheckinSpend) ([]XingyaCheckinAllocation, map[int]*XingyaCheckinCreditLot, error) {
-	if spend.Reserved < 0 || spend.Reserved > common.MaxQuota {
+	if spend.Reserved < 0 || spend.Reserved > common.MaxQuota || spend.BorrowedReserved < 0 || spend.BorrowedReserved > spend.Reserved || spend.BorrowedReserved > wallet.Borrowed {
 		return nil, nil, errors.New("签到预留金额无效")
 	}
 	var allocations []XingyaCheckinAllocation
@@ -224,7 +224,7 @@ func checkinAllocatedLots(tx *gorm.DB, wallet *XingyaCheckinWallet, spend *Xingy
 	lots := make(map[int]*XingyaCheckinCreditLot, len(allocations))
 	reserved := 0
 	for _, allocation := range allocations {
-		if !validCheckinAllocation(allocation) || allocation.Reserved > spend.Reserved-reserved {
+		if !validCheckinAllocation(allocation) || allocation.Reserved > spend.Reserved-spend.BorrowedReserved-reserved {
 			return nil, nil, errors.New("签到请求分配对账不一致")
 		}
 		var lot XingyaCheckinCreditLot
@@ -237,7 +237,7 @@ func checkinAllocatedLots(tx *gorm.DB, wallet *XingyaCheckinWallet, spend *Xingy
 		lots[lot.ID] = &lot
 		reserved += allocation.Reserved
 	}
-	if reserved != spend.Reserved || reserved > wallet.Reserved {
+	if reserved != spend.Reserved-spend.BorrowedReserved || spend.Reserved > wallet.Reserved {
 		return nil, nil, errors.New("签到预留分配缺失，请联系管理员")
 	}
 	slices.SortFunc(allocations, func(a, b XingyaCheckinAllocation) int {
@@ -277,6 +277,13 @@ func adjustCheckinAllocations(tx *gorm.DB, wallet *XingyaCheckinWallet, spend *X
 	}
 	if target < spend.Reserved {
 		release := spend.Reserved - target
+		// Loans have no expiry. Return the unused loan before releasing lots.
+		borrowedRelease := min(release, spend.BorrowedReserved)
+		wallet.Borrowed -= borrowedRelease
+		wallet.Available += borrowedRelease
+		wallet.Reserved -= borrowedRelease
+		spend.BorrowedReserved -= borrowedRelease
+		release -= borrowedRelease
 		for i := len(allocations) - 1; i >= 0 && release > 0; i-- {
 			allocation := &allocations[i]
 			amount := min(release, allocation.Reserved)
@@ -335,7 +342,17 @@ func adjustCheckinAllocations(tx *gorm.DB, wallet *XingyaCheckinWallet, spend *X
 		}
 	}
 	if remaining > 0 {
-		return errors.New("签到可用余额缺少批次记录")
+		limit, err := CheckinOverdraftLimit()
+		if err != nil {
+			return err
+		}
+		if remaining > limit-wallet.Borrowed {
+			return ErrCheckinInsufficient
+		}
+		wallet.Available -= remaining
+		wallet.Reserved += remaining
+		wallet.Borrowed += remaining
+		spend.BorrowedReserved += remaining
 	}
 	return nil
 }
@@ -362,6 +379,86 @@ func settleCheckinAllocations(tx *gorm.DB, wallet *XingyaCheckinWallet, spend *X
 		}
 		if err = tx.Save(allocation).Error; err != nil {
 			return err
+		}
+	}
+	if paid > spend.BorrowedReserved {
+		return errors.New("签到透支结算对账不一致")
+	}
+	unusedLoan := spend.BorrowedReserved - paid
+	wallet.Reserved -= spend.BorrowedReserved
+	wallet.Consumed += paid
+	wallet.Available += unusedLoan
+	wallet.Borrowed -= unusedLoan
+	spend.BorrowedConsumed += paid
+	spend.BorrowedReserved = 0
+	return nil
+}
+
+// New daily grants repay consumed loans first, in receipt order. The grant's
+// allocation then belongs to the original request; unused credit retains its
+// original 30-day expiry. Reserved loans wait for their in-flight settlement.
+func repayCheckinBorrowing(tx *gorm.DB, wallet *XingyaCheckinWallet, lot *XingyaCheckinCreditLot) error {
+	if wallet.Borrowed == 0 {
+		return nil
+	}
+	var spends []XingyaCheckinSpend
+	if err := lockForUpdate(tx).Where("user_id = ? AND borrowed_consumed > 0", wallet.UserID).Order("created_at, request_id").Find(&spends).Error; err != nil {
+		return err
+	}
+	for i := range spends {
+		spend := &spends[i]
+		amount := min(lot.Available, spend.BorrowedConsumed)
+		if amount == 0 {
+			break
+		}
+		if amount > wallet.Borrowed {
+			return errors.New("签到透支偿还对账不一致")
+		}
+		var allocation XingyaCheckinAllocation
+		err := tx.Where("request_id = ? AND lot_id = ?", spend.RequestID, lot.ID).Take(&allocation).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			allocation.RequestID, allocation.LotID = spend.RequestID, lot.ID
+		} else if err != nil {
+			return err
+		}
+		if !validCheckinAllocation(allocation) || allocation.Amount > common.MaxWalletQuota-amount {
+			return errors.New("签到透支偿还分配无效")
+		}
+		allocation.Amount += amount
+		allocation.Consumed += amount
+		if err := tx.Save(&allocation).Error; err != nil {
+			return err
+		}
+		spend.BorrowedConsumed -= amount
+		wallet.Borrowed -= amount
+		lot.Available -= amount
+		lot.Consumed += amount
+		if err := tx.Save(spend).Error; err != nil {
+			return err
+		}
+	}
+	return tx.Save(lot).Error
+}
+
+// A grant may arrive while a loan is still reserved. Once that request finishes,
+// use the available lots to repay its consumed debt without changing net balance.
+func repayAvailableCheckinBorrowing(tx *gorm.DB, wallet *XingyaCheckinWallet) error {
+	if wallet.Borrowed == 0 || wallet.Available+wallet.Borrowed == 0 {
+		return nil
+	}
+	var lots []XingyaCheckinCreditLot
+	if err := tx.Where("user_id = ? AND available > 0", wallet.UserID).Order("expires_at, id").Find(&lots).Error; err != nil {
+		return err
+	}
+	for i := range lots {
+		if !validCheckinLot(lots[i]) {
+			return errors.New("签到批次对账不一致")
+		}
+		if err := repayCheckinBorrowing(tx, wallet, &lots[i]); err != nil {
+			return err
+		}
+		if wallet.Borrowed == 0 {
+			break
 		}
 	}
 	return nil

@@ -289,7 +289,11 @@ export function Wallet(props: WalletProps) {
         <SectionPageLayout.Title>{t('Wallet')}</SectionPageLayout.Title>
         <SectionPageLayout.Content>
           <div className='mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-5'>
-            <WalletStatsCard user={user} loading={userLoading} />
+            <WalletStatsCard
+              user={user}
+              loading={userLoading}
+              checkinEnabled={status?.xingya_checkin_available === true}
+            />
             {status?.xingya_checkin_available === true && (
               <XingyaCheckinCard compact onClaimed={fetchUser} />
             )}

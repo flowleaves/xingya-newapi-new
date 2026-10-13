@@ -7551,6 +7551,21 @@
     "At or above this threshold, daily claims use the fixed reward. Below it, the random range applies. Set 0 to disable.": "À partir de ce seuil, les demandes quotidiennes donnent la récompense fixe. En dessous, la plage aléatoire reste applicable. Définir 0 pour désactiver.",
     "Uses cumulative non-check-in consumption minus self-refunded amounts. Historical consumption counts; check-in spending does not.": "Utilise la consommation cumulée hors crédits de présence, moins les remboursements en libre-service. La consommation historique compte ; les crédits de présence ne comptent pas.",
     "Fixed check-in reward must be positive when the spending threshold is enabled.": "La récompense fixe doit être positive lorsque le seuil est activé.",
-    "Invalid refunded check-in qualifying spend.": "Montant remboursé invalide pour le calcul du seuil."
+    "Invalid refunded check-in qualifying spend.": "Montant remboursé invalide pour le calcul du seuil.",
+    "An extra check-in is available today.": "Un pointage supplémentaire est disponible aujourd’hui.",
+    "Extra check-in reward": "Récompense de pointage supplémentaire",
+    "Check-in balance can reach −10 sprouts. New rewards repay overdrafts first.": "Le solde de pointage peut atteindre −10 pousses. Les nouvelles récompenses remboursent d’abord le découvert.",
+    "Check-in overdraft": "Découvert de pointage",
+    "Separate check-in balance": "Solde de pointage distinct",
+    "Create the check-in group normally, then select it here. Changing the group moves dedicated keys; existing credit and expiry dates are retained. Native token and request pricing are supported.": "Créez le groupe normalement, puis sélectionnez-le ici. Changer de groupe déplace les clés dédiées et conserve les crédits et leurs échéances. Les tarifs par token et par requête sont pris en charge.",
+    "Let everyone check in once more today. Issued rewards are retained; the normal daily limit resumes tomorrow.": "Autorisez un nouveau pointage aujourd’hui pour tous. Les récompenses émises sont conservées ; la limite quotidienne normale reprend demain.",
+    "Refresh today’s check-in eligibility": "Réinitialiser l’éligibilité du jour",
+    "Every user can claim one extra reward today, including users who have already checked in. Existing rewards will be kept. This action cannot be undone.": "Tous les utilisateurs pourront réclamer une récompense supplémentaire aujourd’hui, même ceux ayant déjà pointé. Les récompenses existantes seront conservées. Cette action est irréversible.",
+    "Allow one more check-in": "Autoriser un pointage supplémentaire",
+    "Today’s check-in eligibility refreshed": "Éligibilité du jour réinitialisée",
+    "Check-in balance after this request": "Solde de pointage après cette requête",
+    "Unpaid check-in cost · pending review": "Coût de pointage impayé · à vérifier",
+    "Invalid check-in eligibility record.": "Enregistrement d’éligibilité invalide.",
+    "Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "Les pointages quotidiens suivent l’heure de Pékin. Les administrateurs peuvent autoriser une récompense supplémentaire aujourd’hui. Les clés dédiées utilisent le groupe configuré et ses tarifs. Les anciennes récompenses restent dans le solde ordinaire. Les dépenses de pointage ne comptent pas pour les récompenses d’invitation."
   }
 }

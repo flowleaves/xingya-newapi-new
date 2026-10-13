@@ -59,7 +59,7 @@ export function CheckinHistory(props: CheckinHistoryProps) {
   const language = i18n.resolvedLanguage || i18n.language
   const locale = toIntlLocale(language)
   const [selected, setSelected] = useState<string>()
-  const record = props.records.find((item) => item.checkin_date === selected)
+  const records = props.records.filter((item) => item.checkin_date === selected)
   const checked = props.records.map(
     (item) => new Date(`${item.checkin_date}T12:00:00`)
   )
@@ -116,39 +116,51 @@ export function CheckinHistory(props: CheckinHistoryProps) {
         title={selected || t('Check-in Calendar')}
         contentClassName='sm:max-w-md'
       >
-        {record ? (
-          <div className='flex flex-col gap-4'>
-            <p className='text-2xl font-semibold tabular-nums'>
-              {formatQuotaWithCurrency(record.quota_awarded)}
-            </p>
-            {record.credit && (
-              <>
-                <p className='text-muted-foreground text-xs'>
-                  {t('Expires at (Beijing time)')}:{' '}
-                  {formatCheckinDeadline(record.credit.expires_at, locale)}
+        {records.length > 0 ? (
+          <div className='space-y-6'>
+            {records.map((record) => (
+              <div
+                key={`${record.source}-${record.id ?? record.claim_round ?? 0}`}
+                className='flex flex-col gap-4'
+              >
+                {(record.claim_round ?? 0) > 0 && (
+                  <p className='text-primary text-sm font-medium'>
+                    {t('Extra check-in reward')}
+                  </p>
+                )}
+                <p className='text-2xl font-semibold tabular-nums'>
+                  {formatQuotaWithCurrency(record.quota_awarded)}
                 </p>
-                <CheckinCreditAmounts credit={record.credit} />
-                {record.credit.reserved > 0 && (
+                {record.credit && (
+                  <>
+                    <p className='text-muted-foreground text-xs'>
+                      {t('Expires at (Beijing time)')}:{' '}
+                      {formatCheckinDeadline(record.credit.expires_at, locale)}
+                    </p>
+                    <CheckinCreditAmounts credit={record.credit} />
+                    {record.credit.reserved > 0 && (
+                      <p className='text-muted-foreground text-xs leading-relaxed'>
+                        {t(
+                          'Requests reserved before expiry can finish. Any unused credit returned after its deadline expires immediately.'
+                        )}
+                      </p>
+                    )}
+                  </>
+                )}
+                {record.opening_balance && (
                   <p className='text-muted-foreground text-xs leading-relaxed'>
                     {t(
-                      'Requests reserved before expiry can finish. Any unused credit returned after its deadline expires immediately.'
+                      'This award predates expiry tracking. Its remaining credit is included in the pre-upgrade balance, not tracked by day.'
                     )}
                   </p>
                 )}
-              </>
-            )}
-            {record.opening_balance && (
-              <p className='text-muted-foreground text-xs leading-relaxed'>
-                {t(
-                  'This award predates expiry tracking. Its remaining credit is included in the pre-upgrade balance, not tracked by day.'
-                )}
-              </p>
-            )}
-            <p className='text-muted-foreground text-sm'>
-              {record.source === 'checkin'
-                ? t('Check-in credit')
-                : t('Legacy check-in · ordinary balance')}
-            </p>
+                <p className='text-muted-foreground text-sm'>
+                  {record.source === 'checkin'
+                    ? t('Check-in credit')
+                    : t('Legacy check-in · ordinary balance')}
+                </p>
+              </div>
+            ))}
           </div>
         ) : (
           <p>{t('No check-in record for this date.')}</p>

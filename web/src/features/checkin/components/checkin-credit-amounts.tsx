@@ -58,6 +58,16 @@ export function CheckinCreditAmounts(props: { credit: CreditAmounts }) {
           {formatQuotaWithCurrency(props.credit.expired)}
         </dd>
       </div>
+      {(props.credit.borrowed ?? 0) > 0 && (
+        <div className='min-w-0 rounded-lg border p-3'>
+          <dt className='text-muted-foreground text-xs'>
+            {t('Check-in overdraft')}
+          </dt>
+          <dd className='mt-1 font-semibold break-all tabular-nums'>
+            {formatQuotaWithCurrency(props.credit.borrowed ?? 0)}
+          </dd>
+        </div>
+      )}
     </dl>
   )
 }

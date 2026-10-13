@@ -117,6 +117,11 @@ export function XingyaCheckinCard(props: {
             />
           </div>
           <div aria-live='polite'>
+            {(data.claim_round ?? 0) > 0 && !claimed && (
+              <p className='text-primary mb-2 text-sm font-medium'>
+                {t('An extra check-in is available today.')}
+              </p>
+            )}
             <p className='text-muted-foreground text-xs'>
               {claimed ? t('Today received') : t('Today’s reward range')}
             </p>
@@ -189,6 +194,11 @@ export function XingyaCheckinCard(props: {
             <p className='text-muted-foreground text-xs'>
               {t(
                 'Separate credit · fixed group · no self-refund or regular-balance fallback'
+              )}
+            </p>
+            <p className='text-muted-foreground text-xs leading-relaxed'>
+              {t(
+                'Check-in balance can reach −10 sprouts. New rewards repay overdrafts first.'
               )}
             </p>
             <p className='text-muted-foreground text-xs leading-relaxed'>
@@ -288,7 +298,7 @@ export function XingyaCheckinCard(props: {
           />
           <p className='text-muted-foreground px-1 text-xs leading-relaxed'>
             {t(
-              'Once per day, Beijing time. Check-in credit only pays for request-priced models. Context tiers reserve the highest fee and settle at the actual tier. Unsupported tools and media require a regular key. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.'
+              'Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.'
             )}
           </p>
         </>

@@ -44,7 +44,7 @@ func TestCheckinBrowserSessionPostgres(t *testing.T) {
 	require.NoError(t, model.EnsureLegacyAccessTokenRetireAt(time.Now().Unix()))
 	legacy, err := common.GenerateRandomCharsKey(32)
 	require.NoError(t, err)
-	user := model.User{Username: fmt.Sprintf("cs-%d", time.Now().UnixNano()), AffCode: fmt.Sprintf("cs-%d", time.Now().UnixNano()), Password: "fixture", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AuthVersion: 1, AccessToken: &legacy, Group: "default"}
+	user := model.User{Username: fmt.Sprintf("cs-%d", time.Now().UnixNano()), AffCode: fmt.Sprintf("cs-%d", time.Now().UnixNano()), Password: "fixture", Role: common.RoleRootUser, Status: common.UserStatusEnabled, AuthVersion: 1, AccessToken: &legacy, Group: "default"}
 	require.NoError(t, db.Create(&user).Error)
 	now := time.Now().Unix()
 	session := model.UserSession{SID: common.NewRequestId(), UserID: user.Id, Version: 1, UserAuthVersion: user.AuthVersion, Status: model.UserSessionStatusActive, RefreshHash: "fixture", LoginMethod: "password", LastActiveAt: now, ExpiresAt: now + 3600}
@@ -54,8 +54,12 @@ func TestCheckinBrowserSessionPostgres(t *testing.T) {
 	require.NoError(t, err)
 	scoped, _ := createMiddlewareScopedToken(t, user.Id, 0, "wallet:write")
 	router := gin.New()
-	for _, path := range []string{"/api/user/xingya-daily-claim", "/api/user/xingya-checkin/key"} {
-		router.POST(path, UserAuth(), CheckinBrowserSession(), SessionCookieOriginGuard(), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	for _, path := range []string{"/api/user/xingya-daily-claim", "/api/user/xingya-checkin/key", "/api/xingya/checkin/eligibility/refresh"} {
+		auth := UserAuth()
+		if path == "/api/xingya/checkin/eligibility/refresh" {
+			auth = RootAuth()
+		}
+		router.POST(path, auth, CheckinBrowserSession(), SessionCookieOriginGuard(), func(c *gin.Context) { c.Status(http.StatusNoContent) })
 	}
 	request := func(path, credential, origin string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest("POST", "https://xingya.site"+path, nil)
@@ -69,7 +73,7 @@ func TestCheckinBrowserSessionPostgres(t *testing.T) {
 		router.ServeHTTP(response, req)
 		return response
 	}
-	for _, path := range []string{"/api/user/xingya-daily-claim", "/api/user/xingya-checkin/key"} {
+	for _, path := range []string{"/api/user/xingya-daily-claim", "/api/user/xingya-checkin/key", "/api/xingya/checkin/eligibility/refresh"} {
 		assert.Equal(t, http.StatusNoContent, request(path, jwt, "https://xingya.site").Code)
 		for _, credential := range []string{"", legacy, scoped, "sk-fixture", issueExpiredDashboardAccessToken(t, identity), tamperDashboardToken(jwt)} {
 			assert.NotEqual(t, http.StatusNoContent, request(path, credential, "https://xingya.site").Code)
@@ -77,6 +81,13 @@ func TestCheckinBrowserSessionPostgres(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, request(path, jwt, "https://untrusted.invalid").Code)
 		assert.Equal(t, http.StatusForbidden, request(path, jwt, "").Code)
 	}
+	require.NoError(t, db.Model(&user).Update("role", common.RoleCommonUser).Error)
+	assert.Equal(t, http.StatusForbidden, request("/api/xingya/checkin/eligibility/refresh", jwt, "https://xingya.site").Code)
+	for _, path := range []string{"/api/user/xingya-daily-claim", "/api/user/xingya-checkin/key"} {
+		assert.Equal(t, http.StatusNoContent, request(path, jwt, "https://xingya.site").Code)
+	}
+	require.NoError(t, db.Model(&user).Update("role", common.RoleRootUser).Error)
+
 	for _, mutation := range []struct {
 		name         string
 		target       any
@@ -91,7 +102,9 @@ func TestCheckinBrowserSessionPostgres(t *testing.T) {
 	} {
 		t.Run(mutation.name, func(t *testing.T) {
 			require.NoError(t, db.Model(mutation.target).Update(mutation.field, mutation.value).Error)
-			assert.Equal(t, http.StatusUnauthorized, request("/api/user/xingya-daily-claim", jwt, "https://xingya.site").Code)
+			for _, path := range []string{"/api/user/xingya-daily-claim", "/api/xingya/checkin/eligibility/refresh"} {
+				assert.Equal(t, http.StatusUnauthorized, request(path, jwt, "https://xingya.site").Code)
+			}
 			require.NoError(t, db.Model(mutation.target).Update(mutation.field, mutation.reset).Error)
 		})
 	}

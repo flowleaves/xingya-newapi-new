@@ -18,11 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useForm, type Resolver } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { ErrorState } from '@/components/error-state'
 import { Button } from '@/components/ui/button'
 import {
@@ -37,9 +38,16 @@ import {
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
-import { getCheckinSettings, saveCheckinSettings } from '@/features/checkin/api'
+import {
+  getCheckinSettings,
+  saveCheckinSettings,
+  refreshCheckinEligibility,
+} from '@/features/checkin/api'
 import { checkinSettingsSchema } from '@/features/checkin/lib/settings-schema'
-import type { XingyaCheckinSettings } from '@/features/checkin/types'
+import type {
+  CheckinEligibility,
+  XingyaCheckinSettings,
+} from '@/features/checkin/types'
 import { ApiKeyGroupCombobox } from '@/features/keys/components/api-key-group-combobox'
 
 import { SettingsForm } from '../components/settings-form-layout'
@@ -55,6 +63,8 @@ export function XingyaCheckinSettingsSection() {
   const schema = useMemo(() => checkinSettingsSchema(t), [t])
   const pageActions = useSuppressSettingsSectionHeader()
   const queryClient = useQueryClient()
+  const [refreshEligibility, setRefreshEligibility] =
+    useState<CheckinEligibility | null>(null)
   const query = useQuery({
     queryKey: ['xingya-checkin-settings'],
     queryFn: getCheckinSettings,
@@ -90,6 +100,20 @@ export function XingyaCheckinSettingsSection() {
       toast.success(t('Check-in settings updated'))
     },
   })
+  const refresh = useMutation({
+    mutationFn: refreshCheckinEligibility,
+    onSuccess: async () => {
+      setRefreshEligibility(null)
+      await queryClient.invalidateQueries({ queryKey: ['xingya-checkin'] })
+      toast.success(t('Today’s check-in eligibility refreshed'))
+    },
+    onSettled: () => {
+      setRefreshEligibility(null)
+      return queryClient.invalidateQueries({
+        queryKey: ['xingya-checkin-settings'],
+      })
+    },
+  })
   if (query.isPending) return <Skeleton className='h-72 rounded-xl' />
   if (query.isError || !query.data) {
     return (
@@ -112,7 +136,7 @@ export function XingyaCheckinSettingsSection() {
     <SettingsSection title={t('Xingya Check-in · Dedicated Credit')}>
       <p className='text-muted-foreground text-sm'>
         {t(
-          'Random daily credit is separate from the legacy A/B/C rules. Create the group normally, then select it here. After the first award, the group cannot be replaced.'
+          'Create the check-in group normally, then select it here. Changing the group moves dedicated keys; existing credit and expiry dates are retained. Native token and request pricing are supported.'
         )}
       </p>
       <div className='bg-muted flex flex-col gap-1 rounded-lg p-4 text-sm'>
@@ -123,6 +147,44 @@ export function XingyaCheckinSettingsSection() {
           )}
         </p>
       </div>
+      <div className='flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between'>
+        <p className='text-muted-foreground text-sm leading-relaxed'>
+          {t(
+            'Let everyone check in once more today. Issued rewards are retained; the normal daily limit resumes tomorrow.'
+          )}
+        </p>
+        <Button
+          variant='outline'
+          className='min-h-11 shrink-0'
+          disabled={
+            refresh.isPending || save.isPending || !query.data.eligibility
+          }
+          onClick={() => {
+            if (query.data?.eligibility) {
+              setRefreshEligibility({ ...query.data.eligibility })
+            }
+          }}
+        >
+          {t('Refresh today’s check-in eligibility')}
+        </Button>
+      </div>
+      <ConfirmDialog
+        open={refreshEligibility !== null}
+        onOpenChange={(open) => {
+          if (!open) setRefreshEligibility(null)
+        }}
+        title={t('Refresh today’s check-in eligibility')}
+        desc={t(
+          'Every user can claim one extra reward today, including users who have already checked in. Existing rewards will be kept. This action cannot be undone.'
+        )}
+        confirmText={t('Allow one more check-in')}
+        isLoading={refresh.isPending}
+        handleConfirm={() => {
+          if (refreshEligibility && !refresh.isPending) {
+            refresh.mutate(refreshEligibility)
+          }
+        }}
+      />
       <Form {...form}>
         <SettingsForm>
           <FormField

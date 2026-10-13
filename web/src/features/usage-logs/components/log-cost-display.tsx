@@ -84,9 +84,9 @@ export function LogCostDisplay(props: LogCostDisplayProps) {
   const isSubscription = props.other?.billing_source === 'subscription'
   const isCheckin = props.other?.billing_source === 'checkin'
   const showToolSurcharge = hasToolSurcharge(props.other)
-  const quota = isSubscription
-    ? (props.other?.subscription_consumed ?? props.quota)
-    : props.quota
+  let quota = props.quota
+  if (isSubscription) quota = props.other?.subscription_consumed ?? props.quota
+  if (isCheckin) quota = props.other?.checkin_consumed ?? props.quota
   let source: string | undefined
 
   // A log billed to a subscription always names its funding source: that
@@ -146,6 +146,11 @@ export function LogCostDisplay(props: LogCostDisplayProps) {
           <span className='whitespace-nowrap'>{formatLogQuota(quota)}</span>
         </StatusBadge>
         {showToolSurcharge ? <ToolSurchargeMarker /> : null}
+        {isCheckin &&
+          props.other?.checkin_unpaid_quota != null &&
+          props.other.checkin_unpaid_quota > 0 && (
+            <Badge variant='warning'>{t('Pending review')}</Badge>
+          )}
       </div>
     </TooltipProvider>
   )

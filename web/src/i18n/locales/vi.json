@@ -7551,6 +7551,21 @@
     "At or above this threshold, daily claims use the fixed reward. Below it, the random range applies. Set 0 to disable.": "Khi đạt ngưỡng, nhận thưởng cố định mỗi ngày. Dưới ngưỡng vẫn dùng khoảng ngẫu nhiên. Đặt 0 để tắt.",
     "Uses cumulative non-check-in consumption minus self-refunded amounts. Historical consumption counts; check-in spending does not.": "Tính chi tiêu tích lũy không dùng tín dụng điểm danh, trừ số tiền tự hoàn. Chi tiêu trước đây được tính; chi tiêu tín dụng điểm danh không được tính.",
     "Fixed check-in reward must be positive when the spending threshold is enabled.": "Thưởng điểm danh cố định phải lớn hơn 0 khi bật ngưỡng chi tiêu.",
-    "Invalid refunded check-in qualifying spend.": "Số tiền hoàn để tính ngưỡng điểm danh không hợp lệ."
+    "Invalid refunded check-in qualifying spend.": "Số tiền hoàn để tính ngưỡng điểm danh không hợp lệ.",
+    "An extra check-in is available today.": "Hôm nay có thêm một lượt điểm danh.",
+    "Extra check-in reward": "Thưởng điểm danh bổ sung",
+    "Check-in balance can reach −10 sprouts. New rewards repay overdrafts first.": "Số dư điểm danh có thể xuống −10 mầm. Phần thưởng mới ưu tiên trả khoản thấu chi.",
+    "Check-in overdraft": "Thấu chi điểm danh",
+    "Separate check-in balance": "Số dư điểm danh riêng",
+    "Create the check-in group normally, then select it here. Changing the group moves dedicated keys; existing credit and expiry dates are retained. Native token and request pricing are supported.": "Tạo nhóm theo cách thông thường rồi chọn tại đây. Đổi nhóm sẽ chuyển các khóa chuyên dụng, giữ nguyên hạn mức và ngày hết hạn. Hỗ trợ giá theo token và theo lượt gọi.",
+    "Let everyone check in once more today. Issued rewards are retained; the normal daily limit resumes tomorrow.": "Cho phép mọi người điểm danh thêm một lần hôm nay. Giữ phần thưởng đã phát; ngày mai trở lại giới hạn hằng ngày.",
+    "Refresh today’s check-in eligibility": "Làm mới quyền điểm danh hôm nay",
+    "Every user can claim one extra reward today, including users who have already checked in. Existing rewards will be kept. This action cannot be undone.": "Mọi người có thể nhận thêm một phần thưởng hôm nay, kể cả người đã điểm danh. Giữ phần thưởng hiện có. Không thể hoàn tác thao tác này.",
+    "Allow one more check-in": "Cho phép điểm danh thêm một lần",
+    "Today’s check-in eligibility refreshed": "Đã làm mới quyền điểm danh hôm nay",
+    "Check-in balance after this request": "Số dư điểm danh sau lượt gọi này",
+    "Unpaid check-in cost · pending review": "Chi phí điểm danh chưa trả · chờ kiểm tra",
+    "Invalid check-in eligibility record.": "Bản ghi quyền điểm danh không hợp lệ.",
+    "Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "Điểm danh hằng ngày theo giờ Bắc Kinh. Quản trị viên có thể mở thêm lượt nhận trong ngày. Khóa chuyên dụng sử dụng nhóm và giá mô hình đã cấu hình. Thưởng cũ vẫn nằm trong số dư thường. Tiêu dùng điểm danh không tính vào điều kiện thưởng mời bạn."
   }
 }

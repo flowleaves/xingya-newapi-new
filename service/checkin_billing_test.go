@@ -16,12 +16,10 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 	hosttypes "github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tidwall/gjson"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
@@ -68,7 +66,7 @@ func TestCheckinBillingPostgres(t *testing.T) {
 		{name: "ordinary balance zero and subscription-only preference still use checkin", actual: 100, budget: 300, credit: 1000},
 		{name: "equal reservation is durably settled", actual: 300, budget: 300, credit: 1000},
 		{name: "zero cost releases reservation", actual: 0, budget: 300, credit: 1000},
-		{name: "insufficient checkin cannot fall back", budget: 300, credit: 100, insufficient: true},
+		{name: "insufficient checkin cannot fall back", budget: 50101, credit: 100, insufficient: true},
 		{name: "failed request refunds once", budget: 300, credit: 1000, fail: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -127,7 +125,7 @@ func TestCheckinBillingPostgres(t *testing.T) {
 			assert.Zero(t, saved.Quota)
 		})
 	}
-	// All context tiers must be request-priced; reserve the highest fixed fee.
+	// All-fixed context tiers retain their highest-tier reservation.
 	info := &relaycommon.RelayInfo{TokenQuotaSource: BillingSourceCheckin, ChannelMeta: &relaycommon.ChannelMeta{}, TieredBillingSnapshot: &billingexpr.BillingSnapshot{ExprString: `len <= 250000 ? tier("short", fixed(0.01)) : tier("long", fixed(0.02))`, QuotaPerUnit: 500000, GroupRatio: 1}}
 	budget, err := CheckinRequestBudget(info)
 	require.NoError(t, err)
@@ -140,7 +138,7 @@ func TestCheckinBillingPostgres(t *testing.T) {
 		{"short context refunds one sprout", 200000, 10000, 5000, false},
 		{"boundary stays in short tier", 250000, 10000, 5000, false},
 		{"long context costs two sprouts", 250001, 10000, 10000, false},
-		{"one sprout cannot reserve highest tier", 260000, 5000, 0, true},
+		{"one sprout borrows the second sprout", 260000, 5000, 10000, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			user := model.User{Username: fmt.Sprintf("ct-%d", time.Now().UnixNano()), AffCode: fmt.Sprintf("ct-%d", time.Now().UnixNano()), Status: common.UserStatusEnabled, Quota: 100000000}
@@ -182,13 +180,18 @@ func TestCheckinBillingPostgres(t *testing.T) {
 			assert.Equal(t, user.Quota, saved.Quota)
 		})
 	}
-	t.Run("token and mixed pricing are rejected", func(t *testing.T) {
-		_, err := CheckinRequestBudget(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}, PriceData: hosttypes.PriceData{ModelRatio: 1}})
-		require.ErrorContains(t, err, "仅支持按次")
+	t.Run("token and mixed pricing use native estimates", func(t *testing.T) {
+		budget, err := CheckinRequestBudget(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}, PriceData: hosttypes.PriceData{ModelRatio: 1, QuotaToPreConsume: 300}})
+		require.NoError(t, err)
+		assert.Equal(t, 300, budget)
 		mixed := *info
-		mixed.TieredBillingSnapshot = &billingexpr.BillingSnapshot{ExprString: `len <= 250000 ? tier("short", fixed(0.01)) : tier("long", p*2+c*8)`}
+		mixed.TieredBillingSnapshot = &billingexpr.BillingSnapshot{ExprString: `len <= 250000 ? tier("short", fixed(0.01)) : tier("long", p*2+c*8)`, EstimatedQuotaAfterGroup: 725}
+		budget, err = CheckinRequestBudget(&mixed)
+		require.NoError(t, err)
+		assert.Equal(t, 725, budget)
+		mixed.TieredBillingSnapshot.EstimatedQuotaAfterGroup = -1
 		_, err = CheckinRequestBudget(&mixed)
-		require.ErrorContains(t, err, "所有档位均按次")
+		require.Error(t, err)
 	})
 	t.Run("legacy request multipliers are included before reservation", func(t *testing.T) {
 		info := &relaycommon.RelayInfo{TokenQuotaSource: BillingSourceCheckin, ChannelMeta: &relaycommon.ChannelMeta{}, PriceData: hosttypes.PriceData{UsePrice: true, ModelPrice: 0.0004, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}}}
@@ -203,56 +206,33 @@ func TestCheckinBillingPostgres(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 2, budget, "1.5 internal quota rounds to 2 rather than reserving 1")
 	})
-	t.Run("priced function tools cannot bypass the request budget", func(t *testing.T) {
+	t.Run("synchronous context and tools are allowed but background work stays blocked", func(t *testing.T) {
 		settings, err := model.GetXingyaCheckinSettings()
 		require.NoError(t, err)
-		original := settings
-		settings.SpendEnabled = true
-		if settings.Group == "" {
-			settings.Group = "checkin-fixture"
-		}
-		settings, err = model.SaveXingyaCheckinSettings(settings)
+		settings.SpendEnabled, settings.Group = true, "checkin-fixture"
+		_, err = model.SaveXingyaCheckinSettings(settings)
 		require.NoError(t, err)
-		t.Cleanup(func() {
-			original.Revision = settings.Revision
-			_, err := model.SaveXingyaCheckinSettings(original)
-			require.NoError(t, err)
-		})
-		operation_setting.SetToolPriceForTest("checkin_paid_function", 4)
-		t.Cleanup(func() { operation_setting.DeleteToolPriceForTest("checkin_paid_function") })
-		operation_setting.SetToolPriceForTest("checkin_local_function:billing-target*", 4)
-		t.Cleanup(func() { operation_setting.DeleteToolPriceForTest("checkin_local_function:billing-target*") })
 		for _, tc := range []struct {
-			name string
-			paid bool
-		}{{"checkin_paid_function", true}, {"checkin_local_function", false}} {
-			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-			raw := fmt.Sprintf(`{"model":"fixture","messages":[{"role":"user","content":"hi"}],"max_tokens":10,"tools":[{"type":"function","function":{"name":%q,"parameters":{"type":"object"}}}]}`, tc.name)
-			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(raw))
-			maxOutput := uint(10)
-			info := &relaycommon.RelayInfo{TokenQuotaSource: BillingSourceCheckin, TokenGroup: settings.Group, UsingGroup: settings.Group, OriginModelName: "fixture", Request: &dto.GeneralOpenAIRequest{MaxTokens: &maxOutput}}
-			err := PrepareCheckinRequest(ctx, info)
-			common.CleanupBodyStorage(ctx)
-			if tc.paid {
-				require.ErrorContains(t, err, "额外调用费用")
-			} else {
-				require.NoError(t, err)
-				info.BillingModelName = "billing-target"
-				_, err = CheckinRequestBudget(info)
-				require.ErrorContains(t, err, "额外调用费用", "pricing aliases must not bypass the surcharge check")
-			}
-		}
-		for _, extra := range []string{
-			`"enable_search":true`,
-			`"search_parameters":{"mode":"on"}`,
-			`"functions":[{"name":"checkin_paid_function"}]`,
-			`"messages":[{"role":"system","tools":[{"type":"function","function":{"name":"checkin_paid_function"}}]}]`,
+			name, raw string
+			request   dto.Request
+			blocked   bool
+		}{
+			{"system prompt and tools", `{"tools":[{"type":"web_search"}],"enable_search":true}`, &dto.GeneralOpenAIRequest{}, false},
+			{"remote response context", `{"previous_response_id":"fixture","input":[{"type":"input_file","file_id":"fixture"}]}`, &dto.OpenAIResponsesRequest{}, false},
+			{"background response", `{"background":true}`, &dto.OpenAIResponsesRequest{}, true},
 		} {
-			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{`+extra+`}`))
-			info := &relaycommon.RelayInfo{TokenQuotaSource: BillingSourceCheckin, TokenGroup: settings.Group, UsingGroup: settings.Group, Request: &dto.GeneralOpenAIRequest{}}
-			require.ErrorContains(t, PrepareCheckinRequest(ctx, info), "费用", extra)
-			common.CleanupBodyStorage(ctx)
+			t.Run(tc.name, func(t *testing.T) {
+				ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+				ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(tc.raw))
+				info := &relaycommon.RelayInfo{TokenQuotaSource: BillingSourceCheckin, TokenGroup: settings.Group, UsingGroup: settings.Group, Request: tc.request}
+				err := PrepareCheckinRequest(ctx, info)
+				common.CleanupBodyStorage(ctx)
+				if tc.blocked {
+					require.ErrorContains(t, err, "后台请求")
+				} else {
+					require.NoError(t, err)
+				}
+			})
 		}
 	})
 	t.Run("fixed request fees do not depend on output limits or converted body size", func(t *testing.T) {
@@ -279,18 +259,4 @@ func TestCheckinBillingPostgres(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 1800, wallet.Available)
 	})
-}
-
-func TestCheckinContentRejectsOpaqueCosts(t *testing.T) {
-	for _, raw := range []string{`[{"type":"input_file","file_url":"https://fixture.invalid/file"}]`, `[{"role":"user","content":[{"type":"document","source":{"type":"url","url":"https://fixture.invalid/file"}}]}]`, `[{"type":"item_reference","id":"previous"}]`, `[{"type":"reasoning","encrypted_content":"hidden"}]`, `[{"role":"user","content":[{"type":"tool_result","content":[{"type":"image","source":{"type":"url"}}]}]}]`} {
-		require.Error(t, validateCheckinContent(gjson.Parse(raw), 0))
-	}
-	for _, raw := range []string{
-		`[{"type":"function_call_output","call_id":"fixture","output":[{"type":"input_image","image_url":"https://fixture.invalid/image"}]}]`,
-		`[{"type":"function_call_output","call_id":"fixture","output":[{"type":"input_file","file_id":"fixture-file"}]}]`,
-	} {
-		require.Error(t, validateCheckinContent(gjson.Parse(raw), 0), "tool output blocks must obey the same media restrictions")
-	}
-	require.NoError(t, validateCheckinContent(gjson.Parse(`[{"type":"function_call_output","call_id":"fixture","output":"plain text"}]`), 0))
-	require.NoError(t, validateCheckinContent(gjson.Parse(`[{"role":"user","content":[{"type":"text","text":"hi"}]},{"role":"assistant","content":[{"type":"tool_use","input":{"type":"custom-data"}}]}]`), 0))
 }

@@ -16,11 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Activity, BarChart3, WalletCards } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { Activity, BarChart3, Sprout, WalletCards } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
 import { Skeleton } from '@/components/ui/skeleton'
+import { getXingyaCheckin } from '@/features/checkin/api'
 import { formatQuota } from '@/lib/format'
 
 import type { UserWalletData } from '../types'
@@ -28,14 +30,31 @@ import type { UserWalletData } from '../types'
 interface WalletStatsCardProps {
   user: UserWalletData | null
   loading?: boolean
+  checkinEnabled?: boolean
 }
 
 export function WalletStatsCard(props: WalletStatsCardProps) {
   const { t } = useTranslation()
+  const checkin = useQuery({
+    queryKey: ['xingya-checkin', 'current'],
+    queryFn: () => getXingyaCheckin(),
+    enabled: props.checkinEnabled === true,
+    staleTime: 15_000,
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: 'always',
+  })
+  const gridClass = props.checkinEnabled
+    ? 'grid grid-cols-2 divide-x rounded-lg border sm:grid-cols-4'
+    : 'grid grid-cols-3 divide-x rounded-lg border'
   if (props.loading) {
     return (
-      <div className='grid grid-cols-3 divide-x rounded-lg border'>
-        {['balance', 'usage', 'requests'].map((key) => (
+      <div className={gridClass}>
+        {[
+          'balance',
+          'usage',
+          'requests',
+          ...(props.checkinEnabled ? ['checkin'] : []),
+        ].map((key) => (
           <div key={key} className='min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'>
             <Skeleton className='h-3.5 w-full' />
             <Skeleton className='mt-2 h-6 w-full sm:h-7' />
@@ -75,9 +94,18 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
       tone: 'chart-4',
     },
   ]
+  if (props.checkinEnabled) {
+    stats.splice(1, 0, {
+      label: t('Available check-in credit'),
+      value: checkin.data ? formatQuota(checkin.data.wallet.available) : '—',
+      description: t('Separate check-in balance'),
+      icon: Sprout,
+      tone: 'success',
+    })
+  }
 
   return (
-    <div className='grid grid-cols-3 divide-x rounded-lg border'>
+    <div className={gridClass}>
       {stats.map((item) => (
         <div key={item.label} className='min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'>
           <div className='flex items-center gap-1.5 sm:gap-2.5'>

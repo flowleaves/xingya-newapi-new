@@ -66,6 +66,40 @@ func migrateXingyaTables(db *gorm.DB) error {
 			return err
 		}
 	}
+	if !db.Migrator().HasColumn(wallet, "Borrowed") {
+		if err := db.Migrator().AddColumn(wallet, "Borrowed"); err != nil {
+			return err
+		}
+	}
+	spend := &XingyaCheckinSpend{}
+	for _, column := range []string{"BorrowedReserved", "BorrowedConsumed", "BalanceAfter"} {
+		if !db.Migrator().HasColumn(spend, column) {
+			if err := db.Migrator().AddColumn(spend, column); err != nil {
+				return err
+			}
+		}
+	}
+	// Build the replacement uniqueness before removing the former daily index.
+	// Existing rewards enter round zero and retain all amounts and expiry dates.
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		grant := &XingyaCheckinGrant{}
+		if !tx.Migrator().HasColumn(grant, "ClaimRound") {
+			if err := tx.Migrator().AddColumn(grant, "ClaimRound"); err != nil {
+				return err
+			}
+		}
+		if !tx.Migrator().HasIndex(grant, "idx_xingya_checkin_grant_round") {
+			if err := tx.Migrator().CreateIndex(grant, "idx_xingya_checkin_grant_round"); err != nil {
+				return err
+			}
+		}
+		if tx.Migrator().HasIndex(grant, "idx_xingya_checkin_grant_day") {
+			return tx.Migrator().DropIndex(grant, "idx_xingya_checkin_grant_day")
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
 	reward := &XingyaInviteRewardPending{}
 	for _, column := range []string{"QualifyingCalls", "QualifyingQuota", "EligibleAt", "AutoGrantAt", "GrantMethod"} {
 		if db.Migrator().HasColumn(reward, column) {

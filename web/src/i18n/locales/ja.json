@@ -7551,6 +7551,21 @@
     "At or above this threshold, daily claims use the fixed reward. Below it, the random range applies. Set 0 to disable.": "累計利用額が条件以上になると毎日の報酬が固定になります。未達の場合はランダム範囲を使用します。0で無効にできます。",
     "Uses cumulative non-check-in consumption minus self-refunded amounts. Historical consumption counts; check-in spending does not.": "チェックイン以外の累計利用額からセルフ返金額を差し引きます。過去の利用は含まれ、チェックイン残高の利用は含まれません。",
     "Fixed check-in reward must be positive when the spending threshold is enabled.": "利用額の条件を有効にする場合、固定報酬は0より大きくしてください。",
-    "Invalid refunded check-in qualifying spend.": "チェックイン条件の返金額が不正です。"
+    "Invalid refunded check-in qualifying spend.": "チェックイン条件の返金額が不正です。",
+    "An extra check-in is available today.": "今日は追加でチェックインできます。",
+    "Extra check-in reward": "追加チェックイン報酬",
+    "Check-in balance can reach −10 sprouts. New rewards repay overdrafts first.": "チェックイン残高は−10芽点まで利用可能です。新しい報酬は先に不足分の返済に充てられます。",
+    "Check-in overdraft": "チェックイン不足分",
+    "Separate check-in balance": "独立したチェックイン残高",
+    "Create the check-in group normally, then select it here. Changing the group moves dedicated keys; existing credit and expiry dates are retained. Native token and request pricing are supported.": "通常の方法でグループを作成し、ここで選択します。変更時は専用キーを移行し、既存の残高と有効期限を維持します。トークン課金とリクエスト課金に対応します。",
+    "Let everyone check in once more today. Issued rewards are retained; the normal daily limit resumes tomorrow.": "全ユーザーが今日もう一度チェックインできます。付与済み報酬は維持され、明日は通常の1日1回に戻ります。",
+    "Refresh today’s check-in eligibility": "今日のチェックイン資格を更新",
+    "Every user can claim one extra reward today, including users who have already checked in. Existing rewards will be kept. This action cannot be undone.": "チェックイン済みを含む全ユーザーが今日もう一度報酬を受け取れます。付与済み報酬は維持されます。この操作は取り消せません。",
+    "Allow one more check-in": "追加チェックインを許可",
+    "Today’s check-in eligibility refreshed": "今日のチェックイン資格を更新しました",
+    "Check-in balance after this request": "このリクエストの精算後残高",
+    "Unpaid check-in cost · pending review": "未払いチェックイン費用・確認待ち",
+    "Invalid check-in eligibility record.": "チェックイン資格の記録が無効です。",
+    "Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "毎日のチェックインは北京時間に基づきます。管理者は当日の追加受け取りを許可できます。専用キーは設定されたグループとモデル料金を使用します。従来の報酬は通常残高に残り、チェックイン消費は招待報酬の条件に含まれません。"
   }
 }

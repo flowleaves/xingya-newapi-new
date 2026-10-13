@@ -22,6 +22,7 @@ import { requireServerSuccess } from '@/lib/server-error-message'
 
 import type {
   CheckinAward,
+  CheckinEligibility,
   CheckinKeyResult,
   XingyaCheckinSettings,
   XingyaCheckinStatus,
@@ -64,11 +65,13 @@ export async function createCheckinKey(): Promise<CheckinKeyResult> {
 export async function getCheckinSettings(): Promise<{
   settings: XingyaCheckinSettings
   groups: Record<string, number>
+  eligibility: CheckinEligibility
 }> {
   const response = await api.get<
     ApiResponse<{
       settings: XingyaCheckinSettings
       groups: Record<string, number>
+      eligibility: CheckinEligibility
     }>
   >('/api/xingya/checkin/settings')
   return checkinData(response.data)
@@ -80,6 +83,16 @@ export async function saveCheckinSettings(
   const response = await api.put<ApiResponse<XingyaCheckinSettings>>(
     '/api/xingya/checkin/settings',
     settings
+  )
+  return checkinData(response.data)
+}
+
+export async function refreshCheckinEligibility(
+  expected: CheckinEligibility
+): Promise<CheckinEligibility> {
+  const response = await api.post<ApiResponse<CheckinEligibility>>(
+    '/api/xingya/checkin/eligibility/refresh',
+    expected
   )
   return checkinData(response.data)
 }

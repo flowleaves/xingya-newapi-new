@@ -1293,6 +1293,18 @@ export function DetailsDialog(props: DetailsDialogProps) {
               label={t('Check-in credit consumed')}
               value={formatLogQuota(other.checkin_consumed ?? props.log.quota)}
             />
+            {other.checkin_balance_after != null && (
+              <DetailRow
+                label={t('Check-in balance after this request')}
+                value={formatLogQuota(other.checkin_balance_after)}
+              />
+            )}
+            {(other.checkin_unpaid_quota ?? 0) > 0 && (
+              <DetailRow
+                label={t('Unpaid check-in cost · pending review')}
+                value={formatLogQuota(other.checkin_unpaid_quota ?? 0)}
+              />
+            )}
             <p className='text-muted-foreground text-xs leading-relaxed'>
               {t(
                 'Check-in credit is separate from your regular balance and is not eligible for self-refund or invite rewards.'

@@ -233,6 +233,7 @@ func SetApiRouter(router *gin.Engine) {
 		checkinSettings := apiRouter.Group("/xingya/checkin", middleware.RootAuth(), middleware.DisableCache())
 		checkinSettings.GET("/settings", controller.GetXingyaCheckinSettings)
 		checkinSettings.PUT("/settings", controller.UpdateXingyaCheckinSettings)
+		checkinSettings.POST("/eligibility/refresh", middleware.CheckinBrowserSession(), middleware.SessionCookieOriginGuard(), middleware.UserCriticalRateLimit("checkin-refresh"), controller.RefreshXingyaCheckinEligibility)
 		checkinSettings.GET("/reviews", controller.ListXingyaCheckinReviews)
 		checkinSettings.POST("/reviews/resolve", middleware.CheckinBrowserSession(), middleware.SessionCookieOriginGuard(), middleware.UserCriticalRateLimit("checkin-review"), controller.ResolveXingyaCheckinReview)
 		optionRoute.Use(middleware.RootAuth())

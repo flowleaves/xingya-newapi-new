@@ -232,4 +232,20 @@ describe('log cost display', () => {
       screen.getByRole('img', { name: 'Includes tool-call surcharge' })
     ).toHaveAttribute('data-tool-surcharge-indicator', 'true')
   })
+  test('check-in logs show the paid amount and mark unpaid costs for review', () => {
+    renderCost({
+      quota: 55000,
+      other: {
+        billing_source: 'checkin',
+        checkin_consumed: 50000,
+        checkin_actual_quota: 55000,
+        checkin_unpaid_quota: 5000,
+        checkin_balance_after: -50000,
+      },
+    })
+    expect(screen.getByText('$0.1')).toBeVisible()
+    expect(screen.queryByText('$0.11')).not.toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Check-in credit' })).toBeVisible()
+    expect(screen.getByText('Pending review')).toBeVisible()
+  })
 })

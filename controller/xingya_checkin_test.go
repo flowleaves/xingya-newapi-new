@@ -67,6 +67,7 @@ func TestXingyaCheckinAPIPostgres(t *testing.T) {
 	require.NoError(t, model.DB.AutoMigrate(&model.Option{}, &model.User{}, &model.Token{}, &model.Checkin{}))
 	require.NoError(t, model.LOG_DB.AutoMigrate(&model.Log{}, &model.AuditLog{}))
 	require.NoError(t, model.InitXingyaTables(model.DB))
+	require.NoError(t, model.DB.Where("key = ?", "xingya_checkin_eligibility").Delete(&model.Option{}).Error)
 	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","checkin-fixture":"Check-in"}`))
 	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"checkin-fixture":1}`))
 	user := model.User{Username: fmt.Sprintf("ca-%d", time.Now().UnixNano()), AffCode: fmt.Sprintf("ca-%d", time.Now().UnixNano()), Group: "default", Quota: 90000, Status: common.UserStatusEnabled}
@@ -124,7 +125,7 @@ func TestXingyaCheckinAPIPostgres(t *testing.T) {
 		assert.Zero(t, gjson.Get(recorder.Body.String(), "total_available").Int())
 		assert.Equal(t, int64(10000), gjson.Get(recorder.Body.String(), "total_expired").Int())
 		request := model.XingyaCheckinSpend{RequestID: common.NewRequestId(), UserID: expiredUser.Id, TokenID: token.Id, Group: token.Group}
-		require.ErrorIs(t, model.ReserveCheckinQuota(request, 1000), model.ErrCheckinInsufficient)
+		require.ErrorIs(t, model.ReserveCheckinQuota(request, 50001), model.ErrCheckinInsufficient)
 		var saved model.User
 		require.NoError(t, model.DB.First(&saved, expiredUser.Id).Error)
 		assert.Equal(t, 90000, saved.Quota)
@@ -310,29 +311,59 @@ func TestXingyaCheckinAPIPostgres(t *testing.T) {
 				Relay(c, format)
 			})
 		}
+
+		// Channel system prompts and parameter overrides must use the dedicated
+		// ledger rather than rejecting an otherwise valid request.
+		require.NoError(t, model.DB.Model(&channel).Updates(map[string]any{"setting": `{"system_prompt":"Fixture system instruction"}`, "param_override": `{"temperature":0.5}`}).Error)
 		for _, tc := range []struct {
 			name, path, body, keySuffix string
 			status                      int
 		}{
-			{"remote tool output", "/v1/responses", `{"model":"checkin-fixture-model","input":[{"type":"function_call_output","call_id":"fixture","output":[{"type":"input_image","image_url":"https://fixture.invalid/image"}]}],"max_output_tokens":32}`, "", http.StatusBadRequest},
-			{"hosted search", "/v1/chat/completions", `{"model":"checkin-fixture-model","messages":[{"role":"user","content":"hi"}],"max_tokens":32,"web_search_options":{}}`, "", http.StatusBadRequest},
-			{"channel override", "/v1/chat/completions", `{"model":"checkin-fixture-model","messages":[{"role":"user","content":"hi"}],"max_tokens":32}`, "-1", http.StatusForbidden},
+			{"remote response context", "/v1/responses", `{"model":"checkin-fixture-model","input":"hi","previous_response_id":"fixture","max_output_tokens":32}`, "", http.StatusOK},
+			{"hosted search", "/v1/chat/completions", `{"model":"checkin-fixture-model","messages":[{"role":"user","content":"hi"}],"max_tokens":32,"web_search_options":{}}`, "", http.StatusOK},
+			{"background response", "/v1/responses", `{"model":"checkin-fixture-model","input":"hi","background":true}`, "", http.StatusBadRequest},
+			{"client channel override", "/v1/chat/completions", `{"model":"checkin-fixture-model","messages":[{"role":"user","content":"hi"}]}`, "-1", http.StatusForbidden},
 		} {
-			t.Run(tc.name+" is rejected before upstream without moving funds", func(t *testing.T) {
+			t.Run(tc.name, func(t *testing.T) {
 				before, err := model.GetXingyaCheckinWallet(user.Id)
 				require.NoError(t, err)
+				beforeAttempts := attempts.Load()
 				request := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body))
 				request.Header.Set("Content-Type", "application/json")
 				request.Header.Set("Authorization", "Bearer "+token.GetFullKey()+tc.keySuffix)
 				recorder := httptest.NewRecorder()
 				router.ServeHTTP(recorder, request)
-				assert.Equal(t, tc.status, recorder.Code, recorder.Body.String())
-				assert.Zero(t, attempts.Load())
+				require.Equal(t, tc.status, recorder.Code, recorder.Body.String())
 				after, err := model.GetXingyaCheckinWallet(user.Id)
 				require.NoError(t, err)
-				assert.Equal(t, before, after)
+				if tc.status == http.StatusOK {
+					assert.Equal(t, beforeAttempts+1, attempts.Load())
+					assert.Equal(t, before.Available-110, after.Available)
+				} else {
+					assert.Equal(t, beforeAttempts, attempts.Load())
+					assert.Equal(t, before, after)
+				}
 			})
 		}
+		t.Run("channel-added background response is rejected before the upstream request", func(t *testing.T) {
+			require.NoError(t, model.DB.Model(&channel).Update("param_override", `{"background":true}`).Error)
+			t.Cleanup(func() {
+				require.NoError(t, model.DB.Model(&channel).Update("param_override", `{"temperature":0.5}`).Error)
+			})
+			before, err := model.GetXingyaCheckinWallet(user.Id)
+			require.NoError(t, err)
+			beforeAttempts := attempts.Load()
+			request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"checkin-fixture-model","input":"hi","max_output_tokens":32}`))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Authorization", "Bearer "+token.GetFullKey())
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, request)
+			require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+			assert.Equal(t, beforeAttempts, attempts.Load())
+			after, err := model.GetXingyaCheckinWallet(user.Id)
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+		})
 		for _, path := range []string{"/v1/chat/completions", "/v1/responses", "/v1/messages", "/v1/embeddings"} {
 			for _, stream := range []bool{false, true} {
 				if path == "/v1/embeddings" && stream {
@@ -365,10 +396,12 @@ func TestXingyaCheckinAPIPostgres(t *testing.T) {
 				var log model.Log
 				require.NoError(t, model.LOG_DB.Where("user_id = ? AND type = ?", user.Id, model.LogTypeConsume).Order("id DESC").Take(&log).Error)
 				assert.Equal(t, "checkin", gjson.Get(log.Other, "billing_source").String())
+				assert.Equal(t, int64(charge), gjson.Get(log.Other, "checkin_consumed").Int())
+				assert.Equal(t, int64(after.Available), gjson.Get(log.Other, "checkin_balance_after").Int())
 				assert.False(t, gjson.Get(log.Other, "invite_qualifying").Bool())
 			}
 		}
-		assert.Equal(t, int32(7), attempts.Load())
+		assert.Equal(t, int32(9), attempts.Load())
 		for _, mode := range []string{"truncated", "cancel"} {
 			t.Run(mode+" stream preserves measured checkin consumption", func(t *testing.T) {
 				require.NoError(t, model.DB.Model(&channel).Update("model_mapping", fmt.Sprintf(`{"checkin-fixture-model":"checkin-fixture-%s"}`, mode)).Error)
@@ -397,7 +430,7 @@ func TestXingyaCheckinAPIPostgres(t *testing.T) {
 				assert.Equal(t, "checkin", gjson.Get(log.Other, "billing_source").String())
 			})
 		}
-		assert.Equal(t, int32(9), attempts.Load())
+		assert.Equal(t, int32(11), attempts.Load())
 		// A final upstream failure releases the one shared reservation after all
 		// attempts. No retry can switch the token's funding source or fixed group.
 		require.NoError(t, model.DB.Model(&channel).Update("model_mapping", `{"checkin-fixture-model":"checkin-fixture-failure"}`).Error)
@@ -409,7 +442,7 @@ func TestXingyaCheckinAPIPostgres(t *testing.T) {
 		failedResponse := httptest.NewRecorder()
 		router.ServeHTTP(failedResponse, failedRequest)
 		assert.Equal(t, http.StatusServiceUnavailable, failedResponse.Code, failedResponse.Body.String())
-		assert.Equal(t, int32(11), attempts.Load())
+		assert.Equal(t, int32(13), attempts.Load())
 		require.Eventually(t, func() bool {
 			wallet, err := model.GetXingyaCheckinWallet(user.Id)
 			return err == nil && wallet.Reserved == 0 && wallet.Available == beforeFailure.Available && wallet.Consumed == beforeFailure.Consumed
@@ -435,10 +468,10 @@ func TestXingyaCheckinAPIPostgres(t *testing.T) {
 				{200000, 10000, 5000, http.StatusOK},
 				{250000, 10000, 5000, http.StatusOK},
 				{250001, 10000, 10000, http.StatusOK},
-				{260000, 5000, 0, http.StatusForbidden},
+				{260000, 5000, 10000, http.StatusOK},
 			} {
 				t.Run(fmt.Sprintf("input-%d-balance-%d", tc.input, tc.credit), func(t *testing.T) {
-					require.NoError(t, model.DB.Model(&model.XingyaCheckinWallet{}).Where("user_id = ?", user.Id).Updates(map[string]any{"available": tc.credit, "reserved": 0, "granted": tc.credit, "consumed": 0}).Error)
+					require.NoError(t, model.DB.Model(&model.XingyaCheckinWallet{}).Where("user_id = ?", user.Id).Updates(map[string]any{"available": tc.credit, "reserved": 0, "granted": tc.credit, "consumed": 0, "borrowed": 0}).Error)
 					require.NoError(t, model.DB.Model(&model.XingyaCheckinCreditLot{}).Where("user_id = ?", user.Id).Updates(map[string]any{"available": tc.credit, "reserved": 0, "granted": tc.credit, "consumed": 0}).Error)
 					tierInput.Store(int32(tc.input))
 					observedReserve.Store(0)
@@ -464,6 +497,41 @@ func TestXingyaCheckinAPIPostgres(t *testing.T) {
 			}
 		})
 	})
+	t.Run("refresh handler preserves paid awards and status shows the new daily round", func(t *testing.T) {
+		config.ClaimEnabled = true
+		config, err = model.SaveXingyaCheckinSettings(config)
+		require.NoError(t, err)
+		before, err := model.GetXingyaCheckinWallet(user.Id)
+		require.NoError(t, err)
+		day := model.CheckinBusinessTime(time.Now()).Format("2006-01-02")
+		eligibility, err := model.GetXingyaCheckinEligibility(model.DB, day)
+		require.NoError(t, err)
+		ctx, recorder := newAuthenticatedContext(t, http.MethodPost, "/api/xingya/checkin/eligibility/refresh", eligibility, user.Id)
+		RefreshXingyaCheckinEligibility(ctx)
+		require.True(t, gjson.Get(recorder.Body.String(), "success").Bool(), recorder.Body.String())
+		ctx, recorder = newAuthenticatedContext(t, http.MethodPost, "/api/xingya/checkin/eligibility/refresh", eligibility, user.Id)
+		RefreshXingyaCheckinEligibility(ctx)
+		assert.Equal(t, http.StatusConflict, recorder.Code)
+		ctx, recorder = newAuthenticatedContext(t, http.MethodGet, "/api/user/xingya-checkin", nil, user.Id)
+		GetXingyaCheckinStatus(ctx)
+		assert.False(t, gjson.Get(recorder.Body.String(), "data.today_record.checked_in").Bool())
+		assert.Equal(t, eligibility.Round+1, gjson.Get(recorder.Body.String(), "data.claim_round").Int())
+		ctx, recorder = newAuthenticatedContext(t, http.MethodPost, "/api/user/xingya-daily-claim", nil, user.Id)
+		ClaimXingyaDailyCredit(ctx)
+		require.True(t, gjson.Get(recorder.Body.String(), "success").Bool(), recorder.Body.String())
+		assert.False(t, gjson.Get(recorder.Body.String(), "data.already_claimed").Bool())
+		after, err := model.GetXingyaCheckinWallet(user.Id)
+		require.NoError(t, err)
+		assert.Equal(t, before.Available+10000, after.Available)
+		ctx, recorder = newAuthenticatedContext(t, http.MethodGet, "/api/user/xingya-checkin", nil, user.Id)
+		GetXingyaCheckinStatus(ctx)
+		assert.True(t, gjson.Get(recorder.Body.String(), "data.today_record.checked_in").Bool())
+		var grants []model.XingyaCheckinGrant
+		require.NoError(t, model.DB.Where("user_id = ? AND checkin_date = ?", user.Id, day).Find(&grants).Error)
+		require.Len(t, grants, 2)
+		assert.GreaterOrEqual(t, len(gjson.Get(recorder.Body.String(), "data.records").Array()), 2)
+	})
+
 	// Gin auth middleware is verified separately with live JWT sessions and PATs.
 	// These handler tests deliberately initialize the authorized identity.
 }

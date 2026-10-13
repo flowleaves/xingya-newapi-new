@@ -23,6 +23,7 @@ export interface CheckinCreditAmounts {
   reserved: number
   consumed: number
   expired: number
+  borrowed?: number
 }
 
 export interface CheckinCreditLot extends CheckinCreditAmounts {
@@ -32,6 +33,8 @@ export interface CheckinCreditLot extends CheckinCreditAmounts {
 }
 
 export interface CheckinAward {
+  id?: number
+  claim_round?: number
   checkin_date: string
   quota_awarded: number
   source: 'checkin' | 'legacy'
@@ -40,6 +43,7 @@ export interface CheckinAward {
 }
 
 export interface XingyaCheckinStatus {
+  claim_round?: number
   today: string
   today_record: { checked_in: boolean; quota_awarded: number; source: string }
   month: string
@@ -72,6 +76,11 @@ export interface XingyaCheckinSettings {
   fixed_reward: number
   group: string
   revision: number
+}
+
+export interface CheckinEligibility {
+  day: string
+  round: number
 }
 
 export interface CheckinKeyResult {

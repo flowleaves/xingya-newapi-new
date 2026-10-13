@@ -7551,6 +7551,21 @@
     "At or above this threshold, daily claims use the fixed reward. Below it, the random range applies. Set 0 to disable.": "At or above this threshold, daily claims use the fixed reward. Below it, the random range applies. Set 0 to disable.",
     "Uses cumulative non-check-in consumption minus self-refunded amounts. Historical consumption counts; check-in spending does not.": "Uses cumulative non-check-in consumption minus self-refunded amounts. Historical consumption counts; check-in spending does not.",
     "Fixed check-in reward must be positive when the spending threshold is enabled.": "Fixed check-in reward must be positive when the spending threshold is enabled.",
-    "Invalid refunded check-in qualifying spend.": "Invalid refunded check-in qualifying spend."
+    "Invalid refunded check-in qualifying spend.": "Invalid refunded check-in qualifying spend.",
+    "An extra check-in is available today.": "An extra check-in is available today.",
+    "Extra check-in reward": "Extra check-in reward",
+    "Check-in balance can reach −10 sprouts. New rewards repay overdrafts first.": "Check-in balance can reach −10 sprouts. New rewards repay overdrafts first.",
+    "Check-in overdraft": "Check-in overdraft",
+    "Separate check-in balance": "Separate check-in balance",
+    "Create the check-in group normally, then select it here. Changing the group moves dedicated keys; existing credit and expiry dates are retained. Native token and request pricing are supported.": "Create the check-in group normally, then select it here. Changing the group moves dedicated keys; existing credit and expiry dates are retained. Native token and request pricing are supported.",
+    "Let everyone check in once more today. Issued rewards are retained; the normal daily limit resumes tomorrow.": "Let everyone check in once more today. Issued rewards are retained; the normal daily limit resumes tomorrow.",
+    "Refresh today’s check-in eligibility": "Refresh today’s check-in eligibility",
+    "Every user can claim one extra reward today, including users who have already checked in. Existing rewards will be kept. This action cannot be undone.": "Every user can claim one extra reward today, including users who have already checked in. Existing rewards will be kept. This action cannot be undone.",
+    "Allow one more check-in": "Allow one more check-in",
+    "Today’s check-in eligibility refreshed": "Today’s check-in eligibility refreshed",
+    "Check-in balance after this request": "Check-in balance after this request",
+    "Unpaid check-in cost · pending review": "Unpaid check-in cost · pending review",
+    "Invalid check-in eligibility record.": "Invalid check-in eligibility record.",
+    "Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards."
   }
 }

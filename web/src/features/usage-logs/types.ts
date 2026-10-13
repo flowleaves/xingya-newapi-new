@@ -247,6 +247,8 @@ export interface LogOtherData {
   billing_source?: string
   checkin_consumed?: number
   checkin_actual_quota?: number
+  checkin_balance_after?: number
+  checkin_unpaid_quota?: number
   group?: string
   stream_status?: {
     status?: string

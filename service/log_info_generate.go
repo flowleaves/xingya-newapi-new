@@ -196,8 +196,12 @@ func appendBillingInfo(relayInfo *relaycommon.RelayInfo, other *model.LogOther) 
 		if err := model.DB.Where("request_id = ? AND user_id = ?", relayInfo.RequestId, relayInfo.UserId).Take(&spend).Error; err == nil {
 			other.SetPublic("checkin_consumed", spend.Consumed)
 			other.SetPublic("checkin_actual_quota", spend.ActualQuota)
+			if spend.BalanceAfter != nil {
+				other.SetPublic("checkin_balance_after", *spend.BalanceAfter)
+			}
 			other.SetAdmin("checkin_ledger_state", spend.State)
 			if spend.UnpaidQuota > 0 {
+				other.SetPublic("checkin_unpaid_quota", spend.UnpaidQuota)
 				other.SetAdmin("checkin_unpaid_quota", spend.UnpaidQuota)
 			}
 		} else {

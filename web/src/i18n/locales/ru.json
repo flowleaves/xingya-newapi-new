@@ -7551,6 +7551,21 @@
     "At or above this threshold, daily claims use the fixed reward. Below it, the random range applies. Set 0 to disable.": "При достижении порога ежедневная награда становится фиксированной. До порога действует случайный диапазон. Значение 0 отключает правило.",
     "Uses cumulative non-check-in consumption minus self-refunded amounts. Historical consumption counts; check-in spending does not.": "Учитывается суммарный расход без средств отметки, за вычетом самостоятельных возвратов. Исторический расход учитывается, расход средств отметки — нет.",
     "Fixed check-in reward must be positive when the spending threshold is enabled.": "При включённом пороге фиксированная награда должна быть больше 0.",
-    "Invalid refunded check-in qualifying spend.": "Некорректная сумма возвратов для расчёта порога."
+    "Invalid refunded check-in qualifying spend.": "Некорректная сумма возвратов для расчёта порога.",
+    "An extra check-in is available today.": "Сегодня доступна дополнительная отметка.",
+    "Extra check-in reward": "Дополнительная награда за отметку",
+    "Check-in balance can reach −10 sprouts. New rewards repay overdrafts first.": "Баланс отметок может достигать −10 ростков. Новые награды сначала погашают перерасход.",
+    "Check-in overdraft": "Перерасход баланса отметок",
+    "Separate check-in balance": "Отдельный баланс отметок",
+    "Create the check-in group normally, then select it here. Changing the group moves dedicated keys; existing credit and expiry dates are retained. Native token and request pricing are supported.": "Создайте группу обычным способом и выберите её здесь. Смена группы переносит специальные ключи, сохраняя баланс и сроки действия. Поддерживается оплата за токены и запросы.",
+    "Let everyone check in once more today. Issued rewards are retained; the normal daily limit resumes tomorrow.": "Разрешите всем ещё одну отметку сегодня. Выданные награды сохраняются; завтра возвращается обычный дневной лимит.",
+    "Refresh today’s check-in eligibility": "Обновить право на отметку сегодня",
+    "Every user can claim one extra reward today, including users who have already checked in. Existing rewards will be kept. This action cannot be undone.": "Все пользователи смогут получить ещё одну награду сегодня, включая уже отметившихся. Выданные награды сохранятся. Действие нельзя отменить.",
+    "Allow one more check-in": "Разрешить ещё одну отметку",
+    "Today’s check-in eligibility refreshed": "Право на отметку сегодня обновлено",
+    "Check-in balance after this request": "Баланс отметок после запроса",
+    "Unpaid check-in cost · pending review": "Неоплаченная стоимость отметок · ожидает проверки",
+    "Invalid check-in eligibility record.": "Некорректная запись права на отметку.",
+    "Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "Ежедневные отметки учитываются по пекинскому времени. Администратор может открыть дополнительное получение сегодня. Специальные ключи используют выбранную группу и её цены. Старые награды остаются на обычном балансе. Расходы отметок не учитываются для наград за приглашения."
   }
 }
