@@ -118,12 +118,25 @@ type Diagnostic = { filename: string; code: string; severity: string }
 let directory: string
 let diagnostics: Diagnostic[]
 
+// mkdtemp can fail with EPERM on Windows while the machine is under heavy load
+// (parallel test runs, leaked file handles). Fall back to a directory beside the
+// web package: it is not in .oxlintrc.json's ignorePatterns (unlike node_modules
+// and dist, which oxlint would skip and then report "No files found"), and
+// afterAll removes it again.
+function createWorkDirectory(root: string): string {
+  try {
+    return mkdtempSync(join(tmpdir(), 'new-api-intl-lint-'))
+  } catch {
+    return mkdtempSync(join(root, 'tmp-intl-lint-'))
+  }
+}
+
 beforeAll(() => {
-  directory = mkdtempSync(join(tmpdir(), 'new-api-intl-lint-'))
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
+  directory = createWorkDirectory(root)
   for (const [name, code] of cases) {
     writeFileSync(join(directory, `${name}.tsx`), code)
   }
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
   const result = spawnSync(
     process.execPath,
     [
