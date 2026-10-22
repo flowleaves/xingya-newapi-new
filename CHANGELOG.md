@@ -1,5 +1,17 @@
 # CHANGELOG — 星芽 NewAPI
 
+## xingya-rc46 · 2026-10-22 上游 rc46 合并
+
+- 合并 QuantumNous/new-api `v1.0.0-rc.46`（50 个提交 / 291 个文件），保留注册风控、邀请延迟发奖、独立签到余额、签到专用密钥与自助退款。
+- 冲突仅 10 个文件：3 个代码（令牌用量返回体 `controller/token.go`、令牌 Redis 缓存脚本 `model/token_cache.go`、后台布局 `authenticated-layout.tsx`）与 7 个前端语言包；语言包改用 `bun run i18n:sync` 重生成，七种语言各 7637 个键，星芽自有 300 个键全部保留。
+- 令牌 Redis 缓存脚本重新编号：`allow_user_quota_query=ARGV[17]`、TTL=`ARGV[18]`、`quota_source=ARGV[19]`。若按任一侧直接取用，签到密钥命中缓存时会把签到额度与钱包余额串线。
+- 签到专用密钥永不返回 `user_quota`，且 `PUT /api/token` 不接受为其开启 `allow_user_quota_query`，避免签到密钥读钱包余额。
+- 后端升至 Go 1.26.10（CVE-2026-111943），Docker 构建镜像同步升级；`tokenkit` 与 `relaykit` 均单独构建验证（上游 `make test` 仍漏跑 tokenkit）。
+- 上游行为变更：额度提醒改为“余额跌破阈值只提醒一次”并新增站点开关 `QuotaRemindEnabled`；通知支持按类型独立开关；敏感词过滤新装默认关闭且默认词表清空（存量站点沿用库内配置）；任务重试逐次重新定价并在提交前预留；`TokenAuthReadOnly` 开始拒绝已禁用令牌并强制令牌 IP 白名单。
+- 令牌表由 AutoMigrate 自动新增 `allow_user_quota_query` 列：存量令牌保持关闭，新建令牌默认开启。
+- 数据库按星芽约定只实测 PostgreSQL；`AGENTS.md` 的数据库验证条款已改为 PostgreSQL 单库实测并加星芽标记段。
+- 前端 `vitest` 升至 5.0.4，`bun run test` 全量通过（213 个测试文件 / 2433 个用例）。
+
 ## xingya-rc44 · 2026-10-13 上游 rc44 合并
 
 - 合并 QuantumNous/new-api `v1.0.0-rc.44`，保留星芽注册风控、邀请延迟发奖、补回及独立签到余额逻辑。
