@@ -114,6 +114,10 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/user/oauth/bindings":                 accessTokenScopeRule("account_security:read"),
 	"DELETE /api/user/oauth/bindings/:provider_id": accessTokenScopeRule("account_security:write"),
 
+	// Requires CheckinBrowserSession plus a same-origin cookie, which no access
+	// token can satisfy, so it is declared as a session-only route.
+	"POST /api/xingya/checkin/eligibility/refresh": accessTokenSessionRule,
+
 	// router/api-router.go: /api/user (admin)
 	"GET /api/user/":                                   accessTokenScopeRule("user:read"),
 	"GET /api/user/topup":                              accessTokenScopeRule("billing:read"),
