@@ -64,7 +64,6 @@ export interface XingyaCheckinStatus {
   max_reward: number
   group: string
   group_accessible: boolean
-  pending_review: number
 }
 
 export interface XingyaCheckinSettings {

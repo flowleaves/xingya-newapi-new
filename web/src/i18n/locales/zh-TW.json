@@ -7342,7 +7342,6 @@
     "{{count}} repeated groups": "{{count}} repeated groups",
     "{{count}} requests refunded": "{{count}} requests refunded",
     "192.168.1.10, 10.0.0.0/8": "192.168.1.10, 10.0.0.0/8",
-    "A check-in request needs review. Contact your administrator or switch to a regular key.": "簽到請求費用待核對，請聯絡管理員或切換一般金鑰。",
     "A little sprout every day, a little more possibility.": "每天一點芽點，探索更多可能。",
     "About Xingya": "關於星芽",
     "About Xingya · Tutorial": "關於星芽 · 使用教程",
@@ -7624,7 +7623,6 @@
     "Invalid refunded check-in qualifying spend.": "簽到資格消費的補回金額異常。",
     "An extra check-in is available today.": "今天已開放一次額外簽到。",
     "Extra check-in reward": "額外簽到獎勵",
-    "Check-in balance can reach −10 sprouts. New rewards repay overdrafts first.": "簽到餘額最低可至 −10 芽點，新獎勵優先償還透支。",
     "Check-in overdraft": "簽到透支",
     "Separate check-in balance": "獨立簽到餘額",
     "Create the check-in group normally, then select it here. Changing the group moves dedicated keys; existing credit and expiry dates are retained. Native token and request pricing are supported.": "按一般流程建立群組後在此選擇。切換會同步遷移簽到專用金鑰，已有額度及到期時間保留；支援按 token、按次及混合定價。",
@@ -7636,6 +7634,8 @@
     "Check-in balance after this request": "本次結算後簽到餘額",
     "Unpaid check-in cost · pending review": "未付簽到費用 · 待核對",
     "Invalid check-in eligibility record.": "簽到資格記錄異常。",
-    "Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "簽到按北京時間計算每日資格，管理員可開放當日額外領取。專用金鑰使用後台指定群組及其模型定價。舊簽到獎勵保留在一般餘額中，簽到消費不計入邀請達標。"
+    "Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "簽到按北京時間計算每日資格，管理員可開放當日額外領取。專用金鑰使用後台指定群組及其模型定價。舊簽到獎勵保留在一般餘額中，簽到消費不計入邀請達標。",
+    "Check-in balance is negative. The next reward repays it first and the regular balance is never charged.": "簽到餘額為負，下次簽到將優先補扣，絕不扣一般餘額。",
+    "Check-in balance can go negative up to −100 sprouts. New rewards repay it first.": "簽到餘額最低可至 −100 芽點，新獎勵會優先補扣。"
   }
 }

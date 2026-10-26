@@ -455,7 +455,7 @@ func TestXingyaCheckinAPIPostgres(t *testing.T) {
 		require.NoError(t, model.DB.First(&saved, user.Id).Error)
 		assert.Equal(t, 90000, saved.Quota)
 		assert.Zero(t, saved.UsedQuota)
-		t.Run("context tiers reserve the maximum before upstream and settle actual input", func(t *testing.T) {
+		t.Run("context tiers reserve the matched tier before upstream and settle actual input", func(t *testing.T) {
 			previous := map[string]string{}
 			require.NoError(t, settingconfig.GlobalConfig.SaveToDB(func(key, value string) error { previous[key] = value; return nil }))
 			t.Cleanup(func() { require.NoError(t, settingconfig.GlobalConfig.LoadFromDB(previous)) })
@@ -484,7 +484,9 @@ func TestXingyaCheckinAPIPostgres(t *testing.T) {
 					require.Equal(t, tc.status, recorder.Code, recorder.Body.String())
 					if tc.status == http.StatusOK {
 						assert.Equal(t, beforeAttempts+1, attempts.Load())
-						assert.Equal(t, int64(10000), observedReserve.Load())
+						// The local estimate matches the short tier, so the matched
+						// minimum is reserved; a higher settled tier becomes debt.
+						assert.Equal(t, int64(5000), observedReserve.Load())
 					} else {
 						assert.Equal(t, beforeAttempts, attempts.Load(), "insufficient balance must not call upstream")
 					}

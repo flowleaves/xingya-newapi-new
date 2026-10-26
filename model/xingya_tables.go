@@ -52,6 +52,9 @@ func InitXingyaTables(db *gorm.DB) error {
 	if err := migrateCheckinCreditExpiry(db, 0); err != nil {
 		return err
 	}
+	if err := migrateCheckinLegacyReview(db); err != nil {
+		return err
+	}
 	xingyaTablesReady.Store(true)
 	return nil
 }

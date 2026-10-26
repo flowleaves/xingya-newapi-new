@@ -7342,7 +7342,6 @@
     "{{count}} repeated groups": "{{count}} 个重复组",
     "{{count}} requests refunded": "已补回 {{count}} 条",
     "192.168.1.10, 10.0.0.0/8": "192.168.1.10, 10.0.0.0/8",
-    "A check-in request needs review. Contact your administrator or switch to a regular key.": "签到请求费用待核对，请联系管理员或切换普通密钥。",
     "A little sprout every day, a little more possibility.": "每天一点芽点，探索更多可能。",
     "About Xingya": "关于星芽",
     "About Xingya · Tutorial": "关于星芽 · 使用教程",
@@ -7624,7 +7623,6 @@
     "Invalid refunded check-in qualifying spend.": "签到资格消费的补回金额异常。",
     "An extra check-in is available today.": "今天已开放一次额外签到。",
     "Extra check-in reward": "额外签到奖励",
-    "Check-in balance can reach −10 sprouts. New rewards repay overdrafts first.": "签到余额最低可至 −10 芽点，新奖励优先偿还透支。",
     "Check-in overdraft": "签到透支",
     "Separate check-in balance": "独立签到余额",
     "Create the check-in group normally, then select it here. Changing the group moves dedicated keys; existing credit and expiry dates are retained. Native token and request pricing are supported.": "按普通流程创建分组后在此选择。切换会同步迁移签到专用密钥，已有额度及到期时间保留；支持按 token、按次及混合定价。",
@@ -7636,6 +7634,8 @@
     "Check-in balance after this request": "本次结算后签到余额",
     "Unpaid check-in cost · pending review": "未付签到费用 · 待核对",
     "Invalid check-in eligibility record.": "签到资格记录异常。",
-    "Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "签到按北京时间计算每日资格，管理员可开放当日额外领取。专用密钥使用后台指定分组及其模型定价。旧签到奖励保留在普通余额中，签到消费不计入邀请达标。"
+    "Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "签到按北京时间计算每日资格，管理员可开放当日额外领取。专用密钥使用后台指定分组及其模型定价。旧签到奖励保留在普通余额中，签到消费不计入邀请达标。",
+    "Check-in balance is negative. The next reward repays it first and the regular balance is never charged.": "签到余额为负，下次签到将优先补扣，绝不扣普通余额。",
+    "Check-in balance can go negative up to −100 sprouts. New rewards repay it first.": "签到余额最低可至 −100 芽点，新奖励会优先补扣。"
   }
 }

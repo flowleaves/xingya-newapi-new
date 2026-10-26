@@ -337,7 +337,7 @@ func TestXingyaCheckinPostgres(t *testing.T) {
 		assert.Equal(t, 5000, lots[1].Reserved)
 		assert.Equal(t, 10000, lots[2].Available)
 	})
-	t.Run("manual reconciliation releases expired reserved funds into expiry", func(t *testing.T) {
+	t.Run("releasing an expired reservation moves it into expiry", func(t *testing.T) {
 		setConfig(2, 2)
 		user := newUser()
 		now := time.Date(2030, 5, 1, 0, 0, 0, 0, checkinLocation)
@@ -346,7 +346,7 @@ func TestXingyaCheckinPostgres(t *testing.T) {
 		at := now.Unix()
 		spend := XingyaCheckinSpend{UserID: user.Id, RequestID: common.NewRequestId()}
 		require.NoError(t, reserveCheckinQuotaAt(spend, 10000, at))
-		require.NoError(t, resolveCheckinSpendAt(spend.RequestID, at, "release", 0, now.Add(CheckinCreditLifetime).Unix()))
+		require.NoError(t, finalizeCheckinSpendAt(user.Id, spend.RequestID, 0, true, now.Add(CheckinCreditLifetime).Unix()))
 		balance, err := getXingyaCheckinBalanceAt(user.Id, now.Add(CheckinCreditLifetime).Unix())
 		require.NoError(t, err)
 		assert.Equal(t, 10000, balance.Wallet.Expired)
@@ -474,9 +474,9 @@ func TestXingyaCheckinPostgres(t *testing.T) {
 		require.NoError(t, DB.First(&row, "request_id = ?", spend.RequestID).Error)
 		assert.Equal(t, "settled", row.State)
 	})
-	t.Run("concurrent requests cannot overreserve", func(t *testing.T) {
+	t.Run("concurrent requests cannot overreserve without borrowing", func(t *testing.T) {
 		user := newUser()
-		credit(user.Id, 100)
+		credit(user.Id, 45090)
 		results := make(chan error, 12)
 		var wg sync.WaitGroup
 		for range 12 {
@@ -497,74 +497,75 @@ func TestXingyaCheckinPostgres(t *testing.T) {
 		assert.Equal(t, 3, success)
 		wallet, err := GetXingyaCheckinWallet(user.Id)
 		require.NoError(t, err)
-		assert.Equal(t, -44990, wallet.Available)
+		assert.Zero(t, wallet.Available)
 		assert.Equal(t, 45090, wallet.Reserved)
-		assert.Equal(t, 44990, wallet.Borrowed)
+		assert.Zero(t, wallet.Borrowed)
 	})
-	t.Run("unexpected cost freezes new requests without charging other funds", func(t *testing.T) {
+	t.Run("an insufficient balance explains the required minimum", func(t *testing.T) {
+		user := newUser()
+		credit(user.Id, 100)
+		err := ReserveCheckinQuota(XingyaCheckinSpend{UserID: user.Id, RequestID: common.NewRequestId()}, 500)
+		require.ErrorIs(t, err, ErrCheckinInsufficient)
+		assert.Contains(t, err.Error(), "本次请求至少需要")
+		assert.Contains(t, err.Error(), "当前签到可用")
+	})
+	t.Run("a cost above the reservation becomes a negative balance and blocks new requests", func(t *testing.T) {
+		setConfig(2, 2)
 		user := newUser()
 		credit(user.Id, 1000)
-		spend := XingyaCheckinSpend{UserID: user.Id, RequestID: common.NewRequestId(), Model: fmt.Sprintf("review-model-%d", user.Id)}
+		spend := XingyaCheckinSpend{UserID: user.Id, RequestID: common.NewRequestId(), Model: fmt.Sprintf("negative-model-%d", user.Id)}
 		require.NoError(t, ReserveCheckinQuota(spend, 100))
 		require.NoError(t, FinalizeCheckinSpend(user.Id, spend.RequestID, 52000, false))
 		wallet, err := GetXingyaCheckinWallet(user.Id)
 		require.NoError(t, err)
-		assert.Equal(t, -50000, wallet.Available)
-		assert.Equal(t, 51000, wallet.Consumed)
+		assert.Equal(t, -51000, wallet.Available)
+		assert.Equal(t, 51000, wallet.Borrowed)
+		assert.Equal(t, 52000, wallet.Consumed)
 		var row XingyaCheckinSpend
 		require.NoError(t, DB.First(&row, "request_id = ?", spend.RequestID).Error)
-		assert.Equal(t, "review", row.State)
-		assert.Equal(t, 1000, row.UnpaidQuota)
-		spend.RequestID = common.NewRequestId()
-		require.ErrorIs(t, ReserveCheckinQuota(spend, 1), ErrCheckinReconciliation)
-		require.ErrorIs(t, ReserveCheckinQuota(spend, 0), ErrCheckinReconciliation, "zero estimates cannot bypass the owner's review")
+		assert.Equal(t, "settled", row.State)
+		assert.Zero(t, row.UnpaidQuota)
+		next := spend
+		next.RequestID = common.NewRequestId()
+		require.ErrorIs(t, ReserveCheckinQuota(next, 1), ErrCheckinInsufficient, "a negative balance blocks new requests")
 		other := newUser()
 		credit(other.Id, 1000)
 		otherSpend := XingyaCheckinSpend{UserID: other.Id, RequestID: common.NewRequestId(), Model: spend.Model}
-		require.NoError(t, ReserveCheckinQuota(otherSpend, 1), "a review only pauses its owner")
+		require.NoError(t, ReserveCheckinQuota(otherSpend, 100), "a negative balance only pauses its owner")
 		require.NoError(t, FinalizeCheckinSpend(other.Id, otherSpend.RequestID, 0, true))
-		unaffected := otherSpend
-		unaffected.RequestID, unaffected.Model = common.NewRequestId(), "unaffected-model"
-		require.NoError(t, ReserveCheckinQuota(unaffected, 1))
-		require.NoError(t, FinalizeCheckinSpend(other.Id, unaffected.RequestID, 0, true))
 		var ordinary User
 		require.NoError(t, DB.First(&ordinary, user.Id).Error)
 		assert.Equal(t, user.Quota, ordinary.Quota)
-		require.NoError(t, ResolveCheckinSpend(row.RequestID, row.UpdatedAt, "waive", 0))
-		require.Error(t, ResolveCheckinSpend(row.RequestID, row.UpdatedAt, "waive", 0))
-		require.NoError(t, DB.First(&row, "request_id = ?", row.RequestID).Error)
-		assert.Equal(t, "waived", row.State)
-		assert.Equal(t, 1000, row.UnpaidQuota, "measured unpaid cost remains auditable")
-		require.ErrorIs(t, ReserveCheckinQuota(spend, 1), ErrCheckinInsufficient)
-		otherSpend.RequestID = common.NewRequestId()
-		require.NoError(t, ReserveCheckinQuota(otherSpend, 1))
+		grant, already, err := ClaimXingyaCheckin(user.Id, time.Time{})
+		require.NoError(t, err)
+		assert.False(t, already)
+		assert.Equal(t, 10000, grant.QuotaAwarded)
+		wallet, err = GetXingyaCheckinWallet(user.Id)
+		require.NoError(t, err)
+		assert.Equal(t, -41000, wallet.Available)
+		assert.Equal(t, 41000, wallet.Borrowed)
+		require.ErrorIs(t, ReserveCheckinQuota(next, 1), ErrCheckinInsufficient, "a partial reward keeps the block until the debt is repaid")
 	})
-	t.Run("stale reservation recovery is bounded and cannot repeat", func(t *testing.T) {
-		for _, action := range []string{"release", "settle"} {
-			user := newUser()
-			credit(user.Id, 1000)
-			spend := XingyaCheckinSpend{UserID: user.Id, RequestID: common.NewRequestId()}
-			require.NoError(t, ReserveCheckinQuota(spend, 700))
-			var saved XingyaCheckinSpend
-			require.NoError(t, DB.First(&saved, "request_id = ?", spend.RequestID).Error)
-			require.Error(t, ResolveCheckinSpend(spend.RequestID, saved.UpdatedAt, action, 300), "active requests must not be released")
-			staleAt := common.GetTimestamp() - 25*60*60
-			require.NoError(t, DB.Model(&saved).Update("updated_at", staleAt).Error)
-			require.Error(t, ResolveCheckinSpend(spend.RequestID, staleAt+1, action, 300))
-			require.Error(t, ResolveCheckinSpend(spend.RequestID, staleAt, "settle", 701))
-			require.NoError(t, ResolveCheckinSpend(spend.RequestID, staleAt, action, 300))
-			require.Error(t, ResolveCheckinSpend(spend.RequestID, staleAt, action, 300))
-			wallet, err := GetXingyaCheckinWallet(user.Id)
-			require.NoError(t, err)
-			paid := 300
-			if action == "release" {
-				paid = 0
-			}
-			assert.Equal(t, 1000-paid, wallet.Available)
-			assert.Equal(t, paid, wallet.Consumed)
-			assert.Zero(t, wallet.Reserved)
-			assert.Equal(t, wallet.Granted, wallet.Available+wallet.Consumed)
-		}
+	t.Run("stale reservations are released automatically and active ones stay", func(t *testing.T) {
+		user := newUser()
+		credit(user.Id, 1000)
+		stale := XingyaCheckinSpend{UserID: user.Id, RequestID: common.NewRequestId()}
+		active := XingyaCheckinSpend{UserID: user.Id, RequestID: common.NewRequestId()}
+		require.NoError(t, ReserveCheckinQuota(stale, 300))
+		require.NoError(t, ReserveCheckinQuota(active, 300))
+		staleAt := common.GetTimestamp() - 25*60*60
+		require.NoError(t, DB.Model(&XingyaCheckinSpend{}).Where("request_id = ?", stale.RequestID).Update("updated_at", staleAt).Error)
+		fresh := XingyaCheckinSpend{UserID: user.Id, RequestID: common.NewRequestId()}
+		require.NoError(t, ReserveCheckinQuota(fresh, 400), "the stale reservation returns before the new one is checked")
+		var staleRow, activeRow XingyaCheckinSpend
+		require.NoError(t, DB.First(&staleRow, "request_id = ?", stale.RequestID).Error)
+		require.NoError(t, DB.First(&activeRow, "request_id = ?", active.RequestID).Error)
+		assert.Equal(t, "released", staleRow.State)
+		assert.Equal(t, "reserved", activeRow.State)
+		wallet, err := GetXingyaCheckinWallet(user.Id)
+		require.NoError(t, err)
+		assert.Equal(t, 300, wallet.Available)
+		assert.Equal(t, 700, wallet.Reserved)
 	})
 	t.Run("dedicated key creation reuses exact token and keeps limits", func(t *testing.T) {
 		user := newUser()
@@ -657,13 +658,13 @@ func TestXingyaCheckinPostgres(t *testing.T) {
 		assert.Equal(t, wallet.Borrowed, borrowed)
 		return wallet
 	}
-	t.Run("failed borrowed requests release only the loan after their credit lot expires", func(t *testing.T) {
+	t.Run("a reservation released after its credit lot expires is recorded as expired", func(t *testing.T) {
 		user := newUser()
 		credit(user.Id, 10000)
 		var lot XingyaCheckinCreditLot
 		require.NoError(t, DB.Where("user_id = ?", user.Id).Take(&lot).Error)
 		spend := XingyaCheckinSpend{UserID: user.Id, RequestID: common.NewRequestId()}
-		require.NoError(t, reserveCheckinQuotaAt(spend, 20000, lot.ExpiresAt-1))
+		require.NoError(t, reserveCheckinQuotaAt(spend, 5000, lot.ExpiresAt-1))
 		require.NoError(t, finalizeCheckinSpendAt(user.Id, spend.RequestID, 0, true, lot.ExpiresAt))
 		wallet := assertLedger(t, user.Id)
 		assert.Zero(t, wallet.Available)
@@ -671,39 +672,26 @@ func TestXingyaCheckinPostgres(t *testing.T) {
 		assert.Zero(t, wallet.Reserved)
 		assert.Equal(t, 10000, wallet.Expired)
 	})
-	t.Run("a pending review blocks new requests but permits existing reservations to finish", func(t *testing.T) {
-		user := newUser()
-		credit(user.Id, 10000)
-		pending := XingyaCheckinSpend{UserID: user.Id, RequestID: common.NewRequestId()}
-		inFlight := XingyaCheckinSpend{UserID: user.Id, RequestID: common.NewRequestId()}
-		require.NoError(t, ReserveCheckinQuota(pending, 1000))
-		require.NoError(t, ReserveCheckinQuota(inFlight, 1000))
-		require.NoError(t, FinalizeCheckinSpend(user.Id, pending.RequestID, 70000, false))
-		require.ErrorIs(t, ReserveCheckinQuota(inFlight, 1001), ErrCheckinReconciliation)
-		require.NoError(t, ReserveCheckinQuota(inFlight, 500))
-		require.NoError(t, FinalizeCheckinSpend(user.Id, inFlight.RequestID, 0, true))
-		wallet := assertLedger(t, user.Id)
-		assert.Zero(t, wallet.Reserved)
-		assert.GreaterOrEqual(t, wallet.Available, -50000)
-		fresh := XingyaCheckinSpend{UserID: user.Id, RequestID: common.NewRequestId()}
-		require.ErrorIs(t, ReserveCheckinQuota(fresh, 0), ErrCheckinReconciliation)
-	})
-	t.Run("actual costs borrow up to ten sprouts and later rewards repay without redrawing", func(t *testing.T) {
+	t.Run("the debt ceiling absorbs the excess instead of blocking the settlement", func(t *testing.T) {
 		setConfig(2, 2)
 		user := newUser()
 		credit(user.Id, 5000)
 		spend := XingyaCheckinSpend{UserID: user.Id, RequestID: common.NewRequestId(), Model: "token-priced"}
 		require.NoError(t, ReserveCheckinQuota(spend, 1000))
-		require.NoError(t, FinalizeCheckinSpend(user.Id, spend.RequestID, 55000, false))
-		require.NoError(t, FinalizeCheckinSpend(user.Id, spend.RequestID, 55000, false))
+		require.NoError(t, FinalizeCheckinSpend(user.Id, spend.RequestID, 600000, false))
+		require.NoError(t, FinalizeCheckinSpend(user.Id, spend.RequestID, 600000, false), "finalization stays idempotent")
 		wallet := assertLedger(t, user.Id)
-		assert.Equal(t, -50000, wallet.Available)
-		assert.Equal(t, 50000, wallet.Borrowed)
+		limit, err := CheckinDebtLimit()
+		require.NoError(t, err)
+		assert.Equal(t, -496000, wallet.Available)
+		assert.Equal(t, 496000, wallet.Borrowed)
+		assert.LessOrEqual(t, wallet.Borrowed, limit)
 		var saved XingyaCheckinSpend
 		require.NoError(t, DB.First(&saved, "request_id = ?", spend.RequestID).Error)
 		assert.Equal(t, "settled", saved.State)
+		assert.Equal(t, 99000, saved.UnpaidQuota, "the part above the ceiling is absorbed and audited")
 		require.NotNil(t, saved.BalanceAfter)
-		assert.Equal(t, -50000, *saved.BalanceAfter)
+		assert.Equal(t, -496000, *saved.BalanceAfter)
 		next := spend
 		next.RequestID = common.NewRequestId()
 		require.ErrorIs(t, ReserveCheckinQuota(next, 1), ErrCheckinInsufficient)
@@ -711,33 +699,33 @@ func TestXingyaCheckinPostgres(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, already)
 		wallet = assertLedger(t, user.Id)
-		assert.Equal(t, -40000, wallet.Available)
-		assert.Equal(t, 40000, wallet.Borrowed)
+		assert.Equal(t, -486000, wallet.Available)
+		assert.Equal(t, 486000, wallet.Borrowed)
 		var lot XingyaCheckinCreditLot
 		require.NoError(t, DB.First(&lot, "grant_id = ?", grant.ID).Error)
 		assert.Zero(t, lot.Available)
 		assert.Equal(t, 10000, lot.Consumed)
-		_, already, err = ClaimXingyaCheckin(user.Id, time.Time{})
-		require.NoError(t, err)
-		assert.True(t, already)
-		assert.Equal(t, wallet, assertLedger(t, user.Id))
-		require.NoError(t, ReserveCheckinQuota(next, 10000))
-		require.NoError(t, FinalizeCheckinSpend(user.Id, next.RequestID, 0, true))
-		assert.Equal(t, wallet, assertLedger(t, user.Id))
 	})
-	t.Run("an in-flight loan repays a concurrent reward and merges its existing allocation", func(t *testing.T) {
+	t.Run("a reward repays debt while another request is in flight", func(t *testing.T) {
 		setConfig(2, 2)
 		user := newUser()
+		credit(user.Id, 10000)
 		spend := XingyaCheckinSpend{UserID: user.Id, RequestID: common.NewRequestId()}
-		require.NoError(t, ReserveCheckinQuota(spend, 10000))
-		_, _, err := ClaimXingyaCheckin(user.Id, time.Time{})
-		require.NoError(t, err)
-		require.NoError(t, ReserveCheckinQuota(spend, 15000))
+		require.NoError(t, ReserveCheckinQuota(spend, 5000))
 		require.NoError(t, FinalizeCheckinSpend(user.Id, spend.RequestID, 12500, false))
 		wallet := assertLedger(t, user.Id)
 		assert.Equal(t, -2500, wallet.Available)
 		assert.Equal(t, 2500, wallet.Borrowed)
 		assert.Equal(t, 12500, wallet.Consumed)
+		_, _, err := ClaimXingyaCheckin(user.Id, time.Time{})
+		require.NoError(t, err)
+		wallet = assertLedger(t, user.Id)
+		assert.Equal(t, 7500, wallet.Available)
+		assert.Zero(t, wallet.Borrowed)
+		next := XingyaCheckinSpend{UserID: user.Id, RequestID: common.NewRequestId()}
+		require.NoError(t, ReserveCheckinQuota(next, 7000))
+		require.NoError(t, FinalizeCheckinSpend(user.Id, next.RequestID, 0, true))
+		assert.Equal(t, wallet, assertLedger(t, user.Id))
 	})
 	t.Run("group switching moves only dedicated keys while old in-flight funds can finish", func(t *testing.T) {
 		useUserCacheMiniRedis(t)
@@ -880,7 +868,7 @@ func TestXingyaCheckinFixedRewardValidation(t *testing.T) {
 }
 
 func TestXingyaCheckinOptionsRequireDedicatedInterfaces(t *testing.T) {
-	for _, key := range []string{checkinEligibilityKey, checkinOptionPrefix + "revision", checkinOptionPrefix + "group", "xingya_migration.checkin_credit_expiry"} {
+	for _, key := range []string{checkinEligibilityKey, checkinOptionPrefix + "revision", checkinOptionPrefix + "group", "xingya_migration.checkin_credit_expiry", checkinReviewClearMigration} {
 		t.Run(key, func(t *testing.T) {
 			require.Error(t, validateOptionValue(key, "0"))
 		})

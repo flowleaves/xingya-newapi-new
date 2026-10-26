@@ -239,7 +239,7 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 			s.tokenConsumed = 0
 		}
 		// TODO: model 层应定义哨兵错误（如 ErrNoActiveSubscription），用 errors.Is 替代字符串匹配
-		if errors.Is(err, model.ErrCheckinInsufficient) || errors.Is(err, model.ErrCheckinReconciliation) {
+		if errors.Is(err, model.ErrCheckinInsufficient) {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 		}
 		if errors.Is(err, ErrInsufficientWalletQuota) {

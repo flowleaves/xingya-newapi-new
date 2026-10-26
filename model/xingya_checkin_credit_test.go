@@ -103,7 +103,7 @@ func TestXingyaCheckinOverdraftUpgradePostgres(t *testing.T) {
 	require.NoError(t, db.Create(&original).Error)
 	lot := XingyaCheckinCreditLot{UserID: 1, GrantID: original.ID, Source: "grant", SourceKey: "grant:1", Granted: 12000, Available: 8000, Reserved: 1000, Consumed: 3000, CreatedAt: 1791792000, ExpiresAt: 1794384000}
 	require.NoError(t, db.Create(&lot).Error)
-	oldSpend := preOverdraftCheckinSpend{RequestID: "old-inflight", UserID: 1, Group: "old-group", Reserved: 1000, State: "reserved", UpdatedAt: 1791792000}
+	oldSpend := preOverdraftCheckinSpend{RequestID: "old-inflight", UserID: 1, Group: "old-group", Reserved: 1000, State: "reserved", UpdatedAt: common.GetTimestamp()}
 	require.NoError(t, db.Create(&oldSpend).Error)
 	allocation := XingyaCheckinAllocation{RequestID: oldSpend.RequestID, LotID: lot.ID, Amount: 1000, Reserved: 1000}
 	require.NoError(t, db.Create(&allocation).Error)
@@ -215,4 +215,80 @@ func TestXingyaCheckinExpiryFreshPostgres(t *testing.T) {
 	started, err := strconv.ParseInt(marker.Value, 10, 64)
 	require.NoError(t, err)
 	assert.Positive(t, started)
+}
+
+func TestXingyaCheckinLegacyReviewCleanupPostgres(t *testing.T) {
+	db := checkinMigrationPostgres(t)
+	require.NoError(t, db.AutoMigrate(&Option{}, &XingyaCheckinWallet{}, &XingyaCheckinSpend{}, &XingyaCheckinCreditLot{}, &XingyaCheckinAllocation{}))
+	now := common.GetTimestamp()
+	expires := now + int64(CheckinCreditLifetime/time.Second)
+	// The review row already consumed its loan; the stored unpaid part was never charged.
+	require.NoError(t, db.Create(&XingyaCheckinWallet{UserID: 1, Available: -3000, Borrowed: 3000, Granted: 10000, Consumed: 13000}).Error)
+	require.NoError(t, db.Create(&XingyaCheckinCreditLot{UserID: 1, Source: "opening", SourceKey: "fixture:1", Granted: 10000, Consumed: 10000, CreatedAt: now, ExpiresAt: expires}).Error)
+	review := XingyaCheckinSpend{RequestID: "legacy-review", UserID: 1, Reserved: 0, ActualQuota: 5000, Consumed: 5000, UnpaidQuota: 2000, BorrowedConsumed: 3000, State: "review", CreatedAt: now - 3600, UpdatedAt: now - 3600}
+	require.NoError(t, db.Create(&review).Error)
+	// The stale reservation still holds one sprout and has to be returned.
+	require.NoError(t, db.Create(&XingyaCheckinWallet{UserID: 2, Reserved: 1000, Granted: 1000}).Error)
+	staleLot := XingyaCheckinCreditLot{UserID: 2, Source: "opening", SourceKey: "fixture:2", Granted: 1000, Reserved: 1000, CreatedAt: now, ExpiresAt: expires}
+	require.NoError(t, db.Create(&staleLot).Error)
+	stale := XingyaCheckinSpend{RequestID: "legacy-reserved", UserID: 2, Reserved: 1000, State: "reserved", CreatedAt: now - 25*3600, UpdatedAt: now - 25*3600}
+	require.NoError(t, db.Create(&stale).Error)
+	require.NoError(t, db.Create(&XingyaCheckinAllocation{RequestID: stale.RequestID, LotID: staleLot.ID, Amount: 1000, Reserved: 1000}).Error)
+	// A crashed rc44 reservation may still hold a borrowed loan; releasing it
+	// returns the loan and the reserved lot together.
+	require.NoError(t, db.Create(&XingyaCheckinWallet{UserID: 3, Available: -500, Reserved: 1500, Granted: 1000, Borrowed: 500}).Error)
+	loanedLot := XingyaCheckinCreditLot{UserID: 3, Source: "opening", SourceKey: "fixture:3", Granted: 1000, Reserved: 1000, CreatedAt: now, ExpiresAt: expires}
+	require.NoError(t, db.Create(&loanedLot).Error)
+	loaned := XingyaCheckinSpend{RequestID: "legacy-loaned", UserID: 3, Reserved: 1500, BorrowedReserved: 500, State: "reserved", CreatedAt: now - 25*3600, UpdatedAt: now - 25*3600}
+	require.NoError(t, db.Create(&loaned).Error)
+	require.NoError(t, db.Create(&XingyaCheckinAllocation{RequestID: loaned.RequestID, LotID: loanedLot.ID, Amount: 1000, Reserved: 1000}).Error)
+
+	require.NoError(t, migrateCheckinLegacyReview(db))
+
+	var waived XingyaCheckinSpend
+	require.NoError(t, db.First(&waived, "request_id = ?", review.RequestID).Error)
+	assert.Equal(t, "waived", waived.State)
+	assert.Zero(t, waived.UnpaidQuota, "the legacy unpaid amount is cleared")
+	assert.Zero(t, waived.BorrowedConsumed, "the legacy loan is forgiven with its amount zeroed")
+	var wallet1 XingyaCheckinWallet
+	require.NoError(t, db.First(&wallet1, "user_id = ?", 1).Error)
+	assert.Equal(t, XingyaCheckinWallet{UserID: 1, Granted: 10000, Consumed: 10000}, wallet1)
+	assert.True(t, validCheckinWallet(wallet1))
+
+	var released XingyaCheckinSpend
+	require.NoError(t, db.First(&released, "request_id = ?", stale.RequestID).Error)
+	assert.Equal(t, "released", released.State)
+	assert.Equal(t, 1000, released.Reserved, "the row keeps its historical reservation amount")
+	var wallet2 XingyaCheckinWallet
+	require.NoError(t, db.First(&wallet2, "user_id = ?", 2).Error)
+	assert.Equal(t, XingyaCheckinWallet{UserID: 2, Available: 1000, Granted: 1000}, wallet2)
+	assert.True(t, validCheckinWallet(wallet2))
+	var releasedLot XingyaCheckinCreditLot
+	require.NoError(t, db.First(&releasedLot, staleLot.ID).Error)
+	assert.Equal(t, 1000, releasedLot.Available)
+	assert.Zero(t, releasedLot.Reserved)
+	assert.True(t, validCheckinLot(releasedLot))
+	var returned XingyaCheckinAllocation
+	require.NoError(t, db.First(&returned, "request_id = ?", stale.RequestID).Error)
+	assert.Equal(t, 1000, returned.Returned)
+	var loanedSpend XingyaCheckinSpend
+	require.NoError(t, db.First(&loanedSpend, "request_id = ?", loaned.RequestID).Error)
+	assert.Equal(t, "released", loanedSpend.State)
+	assert.Zero(t, loanedSpend.BorrowedReserved)
+	var wallet3 XingyaCheckinWallet
+	require.NoError(t, db.First(&wallet3, "user_id = ?", 3).Error)
+	assert.Equal(t, XingyaCheckinWallet{UserID: 3, Available: 1000, Granted: 1000}, wallet3)
+	assert.True(t, validCheckinWallet(wallet3))
+	var loanedLotRow XingyaCheckinCreditLot
+	require.NoError(t, db.First(&loanedLotRow, loanedLot.ID).Error)
+	assert.Equal(t, 1000, loanedLotRow.Available)
+	assert.Zero(t, loanedLotRow.Reserved)
+
+	// The marker makes a second startup a no-op even if a row appears later.
+	late := XingyaCheckinSpend{RequestID: "late-review", UserID: 1, State: "review", UnpaidQuota: 77, UpdatedAt: now}
+	require.NoError(t, db.Create(&late).Error)
+	require.NoError(t, migrateCheckinLegacyReview(db))
+	require.NoError(t, db.First(&late, "request_id = ?", late.RequestID).Error)
+	assert.Equal(t, "review", late.State)
+	assert.Equal(t, 77, late.UnpaidQuota)
 }

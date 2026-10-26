@@ -1,5 +1,15 @@
 # CHANGELOG — 星芽 NewAPI
 
+## xingya-rc46 · 2026-10-27 签到按最小扣费、多扣转负余额
+
+- 签到-福利分组请求不再按最高档预留：发请求前只计算并预留本次命中档位的最小扣费（固定按次价 / 阶梯命中档 / 输入 token 估算）。余额低于该金额时直接拒绝，错误信息给出所需与当前可用额度，不进入上游。
+- 结算按真实费用全额扣除：超出预留的部分先消耗剩余签到额度，再形成负余额；负余额硬上限为 100 芽点，下次签到奖励优先补扣。超出硬上限的部分由平台承担并写入 `xingya_checkin_spends.unpaid_quota` 审计，不再产生 review 拦截。
+- 移除 10 芽点透支常量、`review` 状态写入与 `ErrCheckinReconciliation`；超过 24 小时未结算的 `reserved` 在该用户下次预留时自动释放，无需人工核对。
+- 一次性清理历史遗留（幂等迁移 `xingya_migration.checkin_review_clear`）：`review` 行改为 `waived`，未付金额与对应已透支欠款清零；超 24 小时的 `reserved` 释放回批次。不扣普通余额、不动订阅。
+- 删除后台「签到待核对」表格与 `/api/xingya/checkin/reviews`、`/reviews/resolve` 接口；用户状态接口不再返回 `pending_review`。
+- 签到卡片：余额为负时提示下次签到优先补扣；透支上限文案改为 −100 芽点；七种语言同步新增/删除文案。
+- 验证：PostgreSQL 18.6 全新库与 rc46 升级库各启动两次（迁移幂等，遗留行状态与钱包不变量正确）；`go vet`/`go build`、model/service/controller 签到定向 PostgreSQL 测试、前端 typecheck/lint/vitest/生产构建均通过。未推送、未部署。
+
 ## xingya-rc46 · 2026-10-22 上游 rc46 合并
 
 - 合并 QuantumNous/new-api `v1.0.0-rc.46`（50 个提交 / 291 个文件），保留注册风控、邀请延迟发奖、独立签到余额、签到专用密钥与自助退款。

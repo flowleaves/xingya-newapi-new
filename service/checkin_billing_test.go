@@ -125,20 +125,23 @@ func TestCheckinBillingPostgres(t *testing.T) {
 			assert.Zero(t, saved.Quota)
 		})
 	}
-	// All-fixed context tiers retain their highest-tier reservation.
-	info := &relaycommon.RelayInfo{TokenQuotaSource: BillingSourceCheckin, ChannelMeta: &relaycommon.ChannelMeta{}, TieredBillingSnapshot: &billingexpr.BillingSnapshot{ExprString: `len <= 250000 ? tier("short", fixed(0.01)) : tier("long", fixed(0.02))`, QuotaPerUnit: 500000, GroupRatio: 1}}
-	budget, err := CheckinRequestBudget(info)
+	// The matched request tier is the minimum; a higher final tier becomes debt.
+	info := &relaycommon.RelayInfo{TokenQuotaSource: BillingSourceCheckin, ChannelMeta: &relaycommon.ChannelMeta{}, TieredBillingSnapshot: &billingexpr.BillingSnapshot{ExprString: `len <= 250000 ? tier("short", fixed(0.01)) : tier("long", fixed(0.02))`, QuotaPerUnit: 500000, GroupRatio: 1, EstimatedQuotaAfterGroup: 5000}}
+	minimum, err := CheckinRequestMinimum(info)
 	require.NoError(t, err)
-	assert.Equal(t, 10000, budget)
+	assert.Equal(t, 5000, minimum)
 	for _, tc := range []struct {
 		name                string
 		input, credit, want int
+		wantAvailable       int
+		wantBorrowed        int
 		insufficient        bool
 	}{
-		{"short context refunds one sprout", 200000, 10000, 5000, false},
-		{"boundary stays in short tier", 250000, 10000, 5000, false},
-		{"long context costs two sprouts", 250001, 10000, 10000, false},
-		{"one sprout borrows the second sprout", 260000, 5000, 10000, false},
+		{"short context settles at one sprout", 200000, 10000, 5000, 5000, 0, false},
+		{"boundary stays in short tier", 250000, 10000, 5000, 5000, 0, false},
+		{"long context repays the extra from free credit", 250001, 10000, 10000, 0, 0, false},
+		{"long context leaves a negative balance when only the minimum was covered", 250001, 5000, 10000, -5000, 5000, false},
+		{"a balance below the minimum is rejected", 200000, 4999, 0, 4999, 0, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			user := model.User{Username: fmt.Sprintf("ct-%d", time.Now().UnixNano()), AffCode: fmt.Sprintf("ct-%d", time.Now().UnixNano()), Status: common.UserStatusEnabled, Quota: 100000000}
@@ -149,7 +152,7 @@ func TestCheckinBillingPostgres(t *testing.T) {
 			requestInfo.RequestId, requestInfo.IsPlayground, requestInfo.TokenUnlimited = common.NewRequestId(), true, true
 			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-			// Ignore an ordinary estimate higher than the fixed maximum.
+			// The caller's ordinary estimate is replaced by the check-in minimum.
 			apiErr := PreConsumeBilling(ctx, 20000, &requestInfo)
 			if tc.insufficient {
 				require.NotNil(t, apiErr)
@@ -158,7 +161,7 @@ func TestCheckinBillingPostgres(t *testing.T) {
 				require.Nil(t, apiErr)
 				wallet, err := model.GetXingyaCheckinWallet(user.Id)
 				require.NoError(t, err)
-				assert.Equal(t, 10000, wallet.Reserved)
+				assert.Equal(t, minimum, wallet.Reserved)
 				actual, err := billingexpr.ComputeTieredQuota(requestInfo.TieredBillingSnapshot, billingexpr.TokenParams{P: float64(tc.input), Len: float64(tc.input), C: 9000})
 				require.NoError(t, err)
 				assert.Equal(t, tc.want, actual.ActualQuotaAfterGroup)
@@ -166,7 +169,8 @@ func TestCheckinBillingPostgres(t *testing.T) {
 			}
 			wallet, err := model.GetXingyaCheckinWallet(user.Id)
 			require.NoError(t, err)
-			assert.Equal(t, tc.credit-tc.want, wallet.Available)
+			assert.Equal(t, tc.wantAvailable, wallet.Available)
+			assert.Equal(t, tc.wantBorrowed, wallet.Borrowed)
 			assert.Zero(t, wallet.Reserved)
 			assert.Equal(t, tc.want, wallet.Consumed)
 			if !tc.insufficient {
@@ -181,30 +185,30 @@ func TestCheckinBillingPostgres(t *testing.T) {
 		})
 	}
 	t.Run("token and mixed pricing use native estimates", func(t *testing.T) {
-		budget, err := CheckinRequestBudget(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}, PriceData: hosttypes.PriceData{ModelRatio: 1, QuotaToPreConsume: 300}})
+		minimum, err := CheckinRequestMinimum(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}, PriceData: hosttypes.PriceData{ModelRatio: 1, QuotaToPreConsume: 300}})
 		require.NoError(t, err)
-		assert.Equal(t, 300, budget)
+		assert.Equal(t, 300, minimum)
 		mixed := *info
 		mixed.TieredBillingSnapshot = &billingexpr.BillingSnapshot{ExprString: `len <= 250000 ? tier("short", fixed(0.01)) : tier("long", p*2+c*8)`, EstimatedQuotaAfterGroup: 725}
-		budget, err = CheckinRequestBudget(&mixed)
+		minimum, err = CheckinRequestMinimum(&mixed)
 		require.NoError(t, err)
-		assert.Equal(t, 725, budget)
+		assert.Equal(t, 725, minimum)
 		mixed.TieredBillingSnapshot.EstimatedQuotaAfterGroup = -1
-		_, err = CheckinRequestBudget(&mixed)
+		_, err = CheckinRequestMinimum(&mixed)
 		require.Error(t, err)
 	})
 	t.Run("legacy request multipliers are included before reservation", func(t *testing.T) {
 		info := &relaycommon.RelayInfo{TokenQuotaSource: BillingSourceCheckin, ChannelMeta: &relaycommon.ChannelMeta{}, PriceData: hosttypes.PriceData{UsePrice: true, ModelPrice: 0.0004, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}}}
 		info.PriceData.AddOtherRatio("fixture_multiplier", 2)
-		budget, err := CheckinRequestBudget(info)
+		minimum, err := CheckinRequestMinimum(info)
 		require.NoError(t, err)
-		assert.Equal(t, 400, budget)
+		assert.Equal(t, 400, minimum)
 	})
 	t.Run("fractional fixed fees round exactly as settlement", func(t *testing.T) {
 		info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}, PriceData: hosttypes.PriceData{UsePrice: true, ModelPrice: 0.000003, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}}}
-		budget, err := CheckinRequestBudget(info)
+		minimum, err := CheckinRequestMinimum(info)
 		require.NoError(t, err)
-		assert.Equal(t, 2, budget, "1.5 internal quota rounds to 2 rather than reserving 1")
+		assert.Equal(t, 2, minimum, "1.5 internal quota rounds to 2 rather than reserving 1")
 	})
 	t.Run("synchronous context and tools are allowed but background work stays blocked", func(t *testing.T) {
 		settings, err := model.GetXingyaCheckinSettings()

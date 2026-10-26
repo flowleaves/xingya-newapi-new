@@ -7,7 +7,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -88,42 +87,37 @@ func ValidateCheckinChannel(info *relaycommon.RelayInfo) error {
 	return nil
 }
 
-func CheckinRequestBudget(info *relaycommon.RelayInfo) (int, error) {
+// CheckinRequestMinimum is the least this request can settle for. The check-in
+// group is request-priced, so the estimate of the matched request branch is the
+// floor; any higher actual cost becomes wallet debt at settlement.
+func CheckinRequestMinimum(info *relaycommon.RelayInfo) (int, error) {
 	if err := ValidateCheckinChannel(info); err != nil {
 		return 0, err
 	}
 	p := info.PriceData
-	var cost float64
 	if snap := info.TieredBillingSnapshot; snap != nil {
-		bound, err := billingexpr.MaximumFixedRequestCost(snap.ExprString)
-		if err != nil {
-			if snap.EstimatedQuotaAfterGroup < 0 || snap.EstimatedQuotaAfterGroup > common.MaxQuota {
-				return 0, errors.New("签到预算无效")
-			}
-			return snap.EstimatedQuotaAfterGroup, nil
+		if snap.EstimatedQuotaAfterGroup < 0 || snap.EstimatedQuotaAfterGroup > common.MaxQuota {
+			return 0, errors.New("签到最小费用无效")
 		}
-		cost = bound / 1e6 * snap.QuotaPerUnit * snap.GroupRatio
-	} else if p.UsePrice {
-		for _, value := range []float64{p.ModelPrice, common.QuotaPerUnit, p.GroupRatioInfo.GroupRatio} {
-			if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-				return 0, errors.New("签到预算无效")
-			}
-		}
-		// Match ordinary request-price settlement, including decimal rounding.
-		amount := decimal.NewFromFloat(p.ModelPrice).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).Mul(decimal.NewFromFloat(p.GroupRatioInfo.GroupRatio))
-		amount = p.ApplyOtherRatiosToDecimal(amount)
-		cost, _ = amount.Round(0).Float64()
-	} else {
+		return snap.EstimatedQuotaAfterGroup, nil
+	}
+	if !p.UsePrice {
 		if p.QuotaToPreConsume < 0 || p.QuotaToPreConsume > common.MaxQuota {
-			return 0, errors.New("签到预算无效")
+			return 0, errors.New("签到最小费用无效")
 		}
 		return p.QuotaToPreConsume, nil
 	}
-	if cost < 0 || math.IsNaN(cost) || math.IsInf(cost, 0) {
-		return 0, errors.New("签到预算无效")
+	for _, value := range []float64{p.ModelPrice, common.QuotaPerUnit, p.GroupRatioInfo.GroupRatio} {
+		if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0, errors.New("签到最小费用无效")
+		}
 	}
-	if info.TieredBillingSnapshot != nil {
-		return billingexpr.QuotaRoundStrict(cost)
+	// Match ordinary request-price settlement, including decimal rounding.
+	amount := decimal.NewFromFloat(p.ModelPrice).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).Mul(decimal.NewFromFloat(p.GroupRatioInfo.GroupRatio))
+	amount = p.ApplyOtherRatiosToDecimal(amount)
+	cost, _ := amount.Round(0).Float64()
+	if cost < 0 || math.IsNaN(cost) || math.IsInf(cost, 0) {
+		return 0, errors.New("签到最小费用无效")
 	}
 	return common.QuotaFromFloatStrict(cost)
 }
@@ -159,11 +153,11 @@ func ReserveCheckinOutbound(info *relaycommon.RelayInfo, request *http.Request) 
 			return errors.New("后台请求尚不支持签到额度，请切换普通密钥")
 		}
 	}
-	budget, err := CheckinRequestBudget(info)
+	minimum, err := CheckinRequestMinimum(info)
 	if err != nil {
 		return err
 	}
-	return info.Billing.Reserve(budget)
+	return info.Billing.Reserve(minimum)
 }
 
 // RecordUserBillableUsage keeps real request counts without adding check-in

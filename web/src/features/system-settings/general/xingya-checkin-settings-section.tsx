@@ -56,7 +56,6 @@ import {
   useSuppressSettingsSectionHeader,
 } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
-import { CheckinReviewTable } from './checkin-review-table'
 
 export function XingyaCheckinSettingsSection() {
   const { t } = useTranslation()
@@ -371,7 +370,6 @@ export function XingyaCheckinSettingsSection() {
           isSaveDisabled={!form.formState.isDirty}
         />
       </Form>
-      <CheckinReviewTable />
     </SettingsSection>
   )
 }

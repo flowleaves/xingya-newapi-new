@@ -7342,7 +7342,6 @@
     "{{count}} repeated groups": "{{count}} repeated groups",
     "{{count}} requests refunded": "{{count}} requests refunded",
     "192.168.1.10, 10.0.0.0/8": "192.168.1.10, 10.0.0.0/8",
-    "A check-in request needs review. Contact your administrator or switch to a regular key.": "A check-in request needs review. Contact your administrator or switch to a regular key.",
     "A little sprout every day, a little more possibility.": "A little sprout every day, a little more possibility.",
     "About Xingya": "About Xingya",
     "About Xingya · Tutorial": "About Xingya · Tutorial",
@@ -7624,7 +7623,6 @@
     "Invalid refunded check-in qualifying spend.": "Invalid refunded check-in qualifying spend.",
     "An extra check-in is available today.": "An extra check-in is available today.",
     "Extra check-in reward": "Extra check-in reward",
-    "Check-in balance can reach −10 sprouts. New rewards repay overdrafts first.": "Check-in balance can reach −10 sprouts. New rewards repay overdrafts first.",
     "Check-in overdraft": "Check-in overdraft",
     "Separate check-in balance": "Separate check-in balance",
     "Create the check-in group normally, then select it here. Changing the group moves dedicated keys; existing credit and expiry dates are retained. Native token and request pricing are supported.": "Create the check-in group normally, then select it here. Changing the group moves dedicated keys; existing credit and expiry dates are retained. Native token and request pricing are supported.",
@@ -7636,6 +7634,8 @@
     "Check-in balance after this request": "Check-in balance after this request",
     "Unpaid check-in cost · pending review": "Unpaid check-in cost · pending review",
     "Invalid check-in eligibility record.": "Invalid check-in eligibility record.",
-    "Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards."
+    "Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.",
+    "Check-in balance is negative. The next reward repays it first and the regular balance is never charged.": "Check-in balance is negative. The next reward repays it first and the regular balance is never charged.",
+    "Check-in balance can go negative up to −100 sprouts. New rewards repay it first.": "Check-in balance can go negative up to −100 sprouts. New rewards repay it first."
   }
 }

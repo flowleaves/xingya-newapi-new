@@ -206,6 +206,94 @@ func migrateCheckinCreditExpiry(db *gorm.DB, at int64) error {
 	})
 }
 
+const checkinReviewClearMigration = "xingya_migration.checkin_review_clear"
+
+// migrateCheckinLegacyReview runs once. Every historic review row is waived with
+// its outstanding amount zeroed, and reservations older than 24 hours are
+// released. No user stays blocked and no ordinary balance is touched.
+func migrateCheckinLegacyReview(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&Option{}) || !db.Migrator().HasTable(&XingyaCheckinSpend{}) {
+		return nil
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		marker := Option{Key: checkinReviewClearMigration, Value: "1"}
+		created := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&marker)
+		if created.Error != nil {
+			return created.Error
+		}
+		if created.RowsAffected == 0 {
+			return nil
+		}
+		at := common.GetTimestamp()
+		var released, reviewed, unpaidZeroed, borrowedForgiven int
+		for {
+			var stale []XingyaCheckinSpend
+			if err := tx.Where("state = ? AND updated_at < ?", "reserved", at-24*60*60).Order("updated_at, request_id").Limit(200).Find(&stale).Error; err != nil {
+				return err
+			}
+			if len(stale) == 0 {
+				break
+			}
+			for i := range stale {
+				w, err := lockCheckinWallet(tx, stale[i].UserID)
+				if err != nil {
+					return err
+				}
+				if err := finalizeCheckinSpendLocked(tx, w, stale[i].RequestID, 0, true, at); err != nil {
+					return err
+				}
+				if err := tx.Save(w).Error; err != nil {
+					return err
+				}
+				released++
+			}
+		}
+		for {
+			var reviews []XingyaCheckinSpend
+			if err := tx.Where("state = ?", "review").Order("user_id, request_id").Limit(200).Find(&reviews).Error; err != nil {
+				return err
+			}
+			if len(reviews) == 0 {
+				break
+			}
+			for i := range reviews {
+				review := &reviews[i]
+				if review.BorrowedReserved != 0 {
+					return errors.New("签到遗留核对记录含未结算预留")
+				}
+				w, err := lockCheckinWallet(tx, review.UserID)
+				if err != nil {
+					return err
+				}
+				forgive := review.BorrowedConsumed
+				if forgive > 0 {
+					if w.Borrowed < forgive || w.Consumed < forgive {
+						return errors.New("签到遗留核对金额与钱包不一致")
+					}
+					w.Borrowed -= forgive
+					w.Consumed -= forgive
+					w.Available += forgive
+					borrowedForgiven += forgive
+					review.BorrowedConsumed = 0
+				}
+				unpaidZeroed += review.UnpaidQuota
+				review.UnpaidQuota = 0
+				review.State = "waived"
+				review.UpdatedAt = at
+				if err := tx.Save(review).Error; err != nil {
+					return err
+				}
+				if err := tx.Save(w).Error; err != nil {
+					return err
+				}
+				reviewed++
+			}
+		}
+		common.SysLog(fmt.Sprintf("checkin legacy cleanup: reviewed=%d unpaid_zeroed=%d borrowed_forgiven=%d stale_released=%d", reviewed, unpaidZeroed, borrowedForgiven, released))
+		return nil
+	})
+}
+
 // Reservation decreases release the newest allocations first, preserving the
 // earliest expiry for consumption. Final charges use the reverse order.
 func validCheckinAllocation(a XingyaCheckinAllocation) bool {
@@ -342,17 +430,7 @@ func adjustCheckinAllocations(tx *gorm.DB, wallet *XingyaCheckinWallet, spend *X
 		}
 	}
 	if remaining > 0 {
-		limit, err := CheckinOverdraftLimit()
-		if err != nil {
-			return err
-		}
-		if remaining > limit-wallet.Borrowed {
-			return ErrCheckinInsufficient
-		}
-		wallet.Available -= remaining
-		wallet.Reserved += remaining
-		wallet.Borrowed += remaining
-		spend.BorrowedReserved += remaining
+		return ErrCheckinInsufficient
 	}
 	return nil
 }

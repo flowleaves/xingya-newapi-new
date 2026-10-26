@@ -7342,7 +7342,6 @@
     "{{count}} repeated groups": "{{count}} repeated groups",
     "{{count}} requests refunded": "{{count}} requests refunded",
     "192.168.1.10, 10.0.0.0/8": "192.168.1.10, 10.0.0.0/8",
-    "A check-in request needs review. Contact your administrator or switch to a regular key.": "Une requête de pointage doit être vérifiée. Contactez un administrateur ou utilisez une clé classique.",
     "A little sprout every day, a little more possibility.": "Un petit bourgeon chaque jour, de nouvelles possibilités.",
     "About Xingya": "About Xingya",
     "About Xingya · Tutorial": "About Xingya · Tutorial",
@@ -7624,7 +7623,6 @@
     "Invalid refunded check-in qualifying spend.": "Montant remboursé invalide pour le calcul du seuil.",
     "An extra check-in is available today.": "Un pointage supplémentaire est disponible aujourd’hui.",
     "Extra check-in reward": "Récompense de pointage supplémentaire",
-    "Check-in balance can reach −10 sprouts. New rewards repay overdrafts first.": "Le solde de pointage peut atteindre −10 pousses. Les nouvelles récompenses remboursent d’abord le découvert.",
     "Check-in overdraft": "Découvert de pointage",
     "Separate check-in balance": "Solde de pointage distinct",
     "Create the check-in group normally, then select it here. Changing the group moves dedicated keys; existing credit and expiry dates are retained. Native token and request pricing are supported.": "Créez le groupe normalement, puis sélectionnez-le ici. Changer de groupe déplace les clés dédiées et conserve les crédits et leurs échéances. Les tarifs par token et par requête sont pris en charge.",
@@ -7636,6 +7634,8 @@
     "Check-in balance after this request": "Solde de pointage après cette requête",
     "Unpaid check-in cost · pending review": "Coût de pointage impayé · à vérifier",
     "Invalid check-in eligibility record.": "Enregistrement d’éligibilité invalide.",
-    "Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "Les pointages quotidiens suivent l’heure de Pékin. Les administrateurs peuvent autoriser une récompense supplémentaire aujourd’hui. Les clés dédiées utilisent le groupe configuré et ses tarifs. Les anciennes récompenses restent dans le solde ordinaire. Les dépenses de pointage ne comptent pas pour les récompenses d’invitation."
+    "Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "Les pointages quotidiens suivent l’heure de Pékin. Les administrateurs peuvent autoriser une récompense supplémentaire aujourd’hui. Les clés dédiées utilisent le groupe configuré et ses tarifs. Les anciennes récompenses restent dans le solde ordinaire. Les dépenses de pointage ne comptent pas pour les récompenses d’invitation.",
+    "Check-in balance is negative. The next reward repays it first and the regular balance is never charged.": "Le solde de pointage est négatif. La prochaine récompense le rembourse en priorité et le solde classique n'est jamais débité.",
+    "Check-in balance can go negative up to −100 sprouts. New rewards repay it first.": "Le solde de pointage peut descendre jusqu’à −100 pousses ; les nouvelles récompenses le remboursent en priorité."
   }
 }

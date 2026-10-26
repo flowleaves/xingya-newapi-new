@@ -200,10 +200,6 @@ func appendBillingInfo(relayInfo *relaycommon.RelayInfo, other *model.LogOther) 
 				other.SetPublic("checkin_balance_after", *spend.BalanceAfter)
 			}
 			other.SetAdmin("checkin_ledger_state", spend.State)
-			if spend.UnpaidQuota > 0 {
-				other.SetPublic("checkin_unpaid_quota", spend.UnpaidQuota)
-				other.SetAdmin("checkin_unpaid_quota", spend.UnpaidQuota)
-			}
 		} else {
 			common.SysError("cannot read checkin settlement record: " + err.Error())
 		}

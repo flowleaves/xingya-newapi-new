@@ -7342,7 +7342,6 @@
     "{{count}} repeated groups": "{{count}} repeated groups",
     "{{count}} requests refunded": "{{count}} requests refunded",
     "192.168.1.10, 10.0.0.0/8": "192.168.1.10, 10.0.0.0/8",
-    "A check-in request needs review. Contact your administrator or switch to a regular key.": "Запрос требует проверки. Обратитесь к администратору или используйте обычный ключ.",
     "A little sprout every day, a little more possibility.": "Немного ростков каждый день — больше возможностей.",
     "About Xingya": "About Xingya",
     "About Xingya · Tutorial": "About Xingya · Tutorial",
@@ -7624,7 +7623,6 @@
     "Invalid refunded check-in qualifying spend.": "Некорректная сумма возвратов для расчёта порога.",
     "An extra check-in is available today.": "Сегодня доступна дополнительная отметка.",
     "Extra check-in reward": "Дополнительная награда за отметку",
-    "Check-in balance can reach −10 sprouts. New rewards repay overdrafts first.": "Баланс отметок может достигать −10 ростков. Новые награды сначала погашают перерасход.",
     "Check-in overdraft": "Перерасход баланса отметок",
     "Separate check-in balance": "Отдельный баланс отметок",
     "Create the check-in group normally, then select it here. Changing the group moves dedicated keys; existing credit and expiry dates are retained. Native token and request pricing are supported.": "Создайте группу обычным способом и выберите её здесь. Смена группы переносит специальные ключи, сохраняя баланс и сроки действия. Поддерживается оплата за токены и запросы.",
@@ -7636,6 +7634,8 @@
     "Check-in balance after this request": "Баланс отметок после запроса",
     "Unpaid check-in cost · pending review": "Неоплаченная стоимость отметок · ожидает проверки",
     "Invalid check-in eligibility record.": "Некорректная запись права на отметку.",
-    "Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "Ежедневные отметки учитываются по пекинскому времени. Администратор может открыть дополнительное получение сегодня. Специальные ключи используют выбранную группу и её цены. Старые награды остаются на обычном балансе. Расходы отметок не учитываются для наград за приглашения."
+    "Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "Ежедневные отметки учитываются по пекинскому времени. Администратор может открыть дополнительное получение сегодня. Специальные ключи используют выбранную группу и её цены. Старые награды остаются на обычном балансе. Расходы отметок не учитываются для наград за приглашения.",
+    "Check-in balance is negative. The next reward repays it first and the regular balance is never charged.": "Баланс отметок отрицательный. Следующая награда сначала погасит его; обычный баланс не списывается.",
+    "Check-in balance can go negative up to −100 sprouts. New rewards repay it first.": "Баланс отметок может уходить до −100 ростков; новые награды сначала погашают его."
   }
 }

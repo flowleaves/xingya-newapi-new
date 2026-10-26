@@ -56,7 +56,6 @@ function fixture(): XingyaCheckinStatus {
     max_reward: 2,
     group: 'checkin-fixture',
     group_accessible: true,
-    pending_review: 0,
   }
 }
 
@@ -271,13 +270,10 @@ test('loaded settings populate the form and a complete save uses the newest revi
     group: 'checkin-fixture',
     revision: 1,
   }
-  vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+  vi.spyOn(api, 'get').mockImplementation(async () => ({
     data: {
       success: true,
-      data:
-        url === '/api/xingya/checkin/reviews'
-          ? { items: [], total: 0 }
-          : { settings, groups: { 'checkin-fixture': 1 } },
+      data: { settings, groups: { 'checkin-fixture': 1 } },
     },
   }))
   const put = vi
@@ -435,7 +431,12 @@ test('negative check-in balances and an extra daily round are visible', async ()
   ).toBeVisible()
   expect(
     screen.getByText(
-      'Check-in balance can reach −10 sprouts. New rewards repay overdrafts first.'
+      'Check-in balance can go negative up to −100 sprouts. New rewards repay it first.'
+    )
+  ).toBeVisible()
+  expect(
+    screen.getByText(
+      'Check-in balance is negative. The next reward repays it first and the regular balance is never charged.'
     )
   ).toBeVisible()
   expect(screen.getByRole('button', { name: 'Check in now' })).toBeEnabled()
@@ -456,17 +457,14 @@ test('refresh confirmation retains its displayed round after a background refetc
   }
   const eligibility = { day: '2026-10-13', round: 0 }
   let currentEligibility = eligibility
-  vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+  vi.spyOn(api, 'get').mockImplementation(async () => ({
     data: {
       success: true,
-      data:
-        url === '/api/xingya/checkin/reviews'
-          ? { items: [], total: 0 }
-          : {
-              settings,
-              eligibility: currentEligibility,
-              groups: { 'checkin-fixture': 1 },
-            },
+      data: {
+        settings,
+        eligibility: currentEligibility,
+        groups: { 'checkin-fixture': 1 },
+      },
     },
   }))
   const post = vi.spyOn(api, 'post').mockImplementation(async () => ({

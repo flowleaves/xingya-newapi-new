@@ -25,11 +25,11 @@ const (
 // 和首次预扣一样必须由余额覆盖。
 func PreConsumeBilling(c *gin.Context, preConsumedQuota int, relayInfo *relaycommon.RelayInfo) *types.NewAPIError {
 	if relayInfo != nil && relayInfo.TokenQuotaSource == BillingSourceCheckin {
-		budget, err := CheckinRequestBudget(relayInfo)
+		minimum, err := CheckinRequestMinimum(relayInfo)
 		if err != nil {
 			return CheckinBillingError(err)
 		}
-		preConsumedQuota = budget
+		preConsumedQuota = minimum
 	}
 	if relayInfo != nil && relayInfo.QuotaClamp != nil {
 		return types.NewErrorWithStatusCode(

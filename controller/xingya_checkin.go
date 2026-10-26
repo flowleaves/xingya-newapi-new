@@ -3,8 +3,6 @@ package controller
 import (
 	"errors"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -109,14 +107,9 @@ func GetXingyaCheckinStatus(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	var pending int64
-	if err = model.DB.Model(&model.XingyaCheckinSpend{}).Where("user_id = ? AND (state = ? OR (state = ? AND updated_at < ?))", userID, "review", "reserved", now.Add(-24*time.Hour).Unix()).Count(&pending).Error; err != nil {
-		common.ApiError(c, err)
-		return
-	}
 	common.ApiSuccess(c, gin.H{"today": today, "today_record": todayRecord, "month": month, "records": records, "month_quota": monthQuota, "wallet": balance.Wallet, "expiry": balance.Expiry,
 		"claim_enabled": s.ClaimEnabled, "spend_enabled": s.SpendEnabled, "min_reward": minimum, "max_reward": maximum, "group": s.Group,
-		"group_accessible": service.IsUserSelectableGroup(group, s.Group), "pending_review": pending, "claim_round": eligibility.Round})
+		"group_accessible": service.IsUserSelectableGroup(group, s.Group), "claim_round": eligibility.Round})
 }
 
 func ClaimXingyaDailyCredit(c *gin.Context) {
@@ -227,50 +220,4 @@ func UpdateXingyaCheckinSettings(c *gin.Context) {
 	}
 	recordManageAudit(c, "checkin.settings.update", map[string]any{"group": s.Group, "revision": s.Revision, "claim_enabled": s.ClaimEnabled, "spend_enabled": s.SpendEnabled, "min_reward": s.MinReward, "max_reward": s.MaxReward, "consume_threshold": s.ConsumeThreshold, "fixed_reward": s.FixedReward})
 	common.ApiSuccess(c, s)
-}
-
-func ListXingyaCheckinReviews(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("p", "1"))
-	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
-	if page < 1 || page > 1000000 || size < 1 || size > 100 {
-		common.ApiErrorMsg(c, "分页参数无效")
-		return
-	}
-	query := model.DB.Model(&model.XingyaCheckinSpend{}).Where("state = ? OR (state = ? AND updated_at < ?)", "review", "reserved", common.GetTimestamp()-24*60*60)
-	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	rows := []model.XingyaCheckinSpend{}
-	if err := query.Order("updated_at ASC, request_id ASC").Offset((page - 1) * size).Limit(size).Find(&rows).Error; err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	common.ApiSuccess(c, gin.H{"items": rows, "total": total, "page": page, "page_size": size})
-}
-
-func ResolveXingyaCheckinReview(c *gin.Context) {
-	var request struct {
-		RequestID   string `json:"request_id"`
-		UpdatedAt   int64  `json:"updated_at"`
-		Action      string `json:"action"`
-		ActualQuota int    `json:"actual_quota"`
-		Reason      string `json:"reason"`
-	}
-	if err := c.ShouldBindJSON(&request); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	request.Reason = strings.TrimSpace(request.Reason)
-	if len(request.Reason) < 4 || len(request.Reason) > 500 {
-		common.ApiErrorMsg(c, "请填写已核实的依据（4～500字节）")
-		return
-	}
-	if err := model.ResolveCheckinSpend(request.RequestID, request.UpdatedAt, request.Action, request.ActualQuota); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	recordManageAudit(c, "checkin.spend.resolve", map[string]any{"request_id": request.RequestID, "action": request.Action, "actual_quota": request.ActualQuota, "reason": request.Reason})
-	common.ApiSuccess(c, nil)
 }

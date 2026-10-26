@@ -177,10 +177,10 @@ export function XingyaCheckinCard(props: {
                 {formatQuotaWithCurrency(data.wallet.reserved)}
               </p>
             )}
-            {data.pending_review > 0 && (
+            {data.wallet.available < 0 && (
               <p className='text-warning text-sm'>
                 {t(
-                  'A check-in request needs review. Contact your administrator or switch to a regular key.'
+                  'Check-in balance is negative. The next reward repays it first and the regular balance is never charged.'
                 )}
               </p>
             )}
@@ -198,7 +198,7 @@ export function XingyaCheckinCard(props: {
             </p>
             <p className='text-muted-foreground text-xs leading-relaxed'>
               {t(
-                'Check-in balance can reach −10 sprouts. New rewards repay overdrafts first.'
+                'Check-in balance can go negative up to −100 sprouts. New rewards repay it first.'
               )}
             </p>
             <p className='text-muted-foreground text-xs leading-relaxed'>

@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -23,85 +24,16 @@ const checkinOptionPrefix = "xingya_checkin_setting."
 const checkinEligibilityKey = "xingya_checkin_eligibility"
 
 // Internal quota still uses the existing USD conversion (100 sprouts per USD).
-func CheckinOverdraftLimit() (int, error) { return CheckinRewardQuota(10) }
+// The negative balance may not exceed 100 sprouts; a cost beyond that ceiling is
+// absorbed and audited instead of rejecting a charge the upstream already served.
+func CheckinDebtLimit() (int, error) { return CheckinRewardQuota(100) }
 
 var (
-	ErrCheckinInsufficient   = errors.New("签到额度不足，请切换普通密钥 / Check-in credit is insufficient; switch to a regular key")
+	ErrCheckinInsufficient   = errors.New("签到余额不足，请签到后再试或切换普通密钥")
 	ErrCheckinPaused         = errors.New("签到领取已暂停")
 	ErrCheckinConfigConflict = errors.New("签到设置已被更新，请刷新后重试")
-	ErrCheckinReconciliation = errors.New("签到请求费用待核对，请切换普通密钥")
 	checkinLocation          = time.FixedZone("Asia/Shanghai", 8*60*60)
 )
-
-// ResolveCheckinSpend is a maintenance action after the operator has checked the
-// upstream/log evidence. Unknown in-flight funds are never released on a timer.
-// A review row keeps its measured cost/unpaid amount even after a waiver.
-func ResolveCheckinSpend(requestID string, updatedAt int64, action string, actual int) error {
-	return resolveCheckinSpendAt(requestID, updatedAt, action, actual, 0)
-}
-
-func resolveCheckinSpendAt(requestID string, updatedAt int64, action string, actual int, at int64) error {
-	if requestID == "" || updatedAt <= 0 || actual < 0 || actual > common.MaxQuota {
-		return errors.New("核对参数无效")
-	}
-	var initial XingyaCheckinSpend
-	if err := DB.Where("request_id = ?", requestID).Take(&initial).Error; err != nil {
-		return err
-	}
-	return DB.Transaction(func(tx *gorm.DB) error {
-		wallet, err := lockCheckinWallet(tx, initial.UserID)
-		if err != nil {
-			return err
-		}
-		if at == 0 {
-			at = common.GetTimestamp()
-		}
-		if err = expireCheckinCredit(tx, wallet, at); err != nil {
-			return err
-		}
-		var spend XingyaCheckinSpend
-		if err = lockForUpdate(tx).Where("request_id = ?", requestID).Take(&spend).Error; err != nil {
-			return err
-		}
-		if spend.UpdatedAt != updatedAt {
-			return errors.New("资金记录已变化，请刷新")
-		}
-		if spend.State == "review" && action == "waive" {
-			spend.State = "waived"
-		} else if spend.State == "reserved" && spend.UpdatedAt < at-24*60*60 && (action == "settle" || action == "release") {
-			if action == "release" {
-				actual = 0
-			}
-			if wallet.Reserved < spend.Reserved || actual > spend.Reserved {
-				return errors.New("核对金额超出预留或钱包不一致")
-			}
-			if wallet.Consumed > common.MaxWalletQuota-actual {
-				return errors.New("累计额度超出上限")
-			}
-			if err = settleCheckinAllocations(tx, wallet, &spend, actual, at); err != nil {
-				return err
-			}
-			spend.ActualQuota, spend.Consumed = actual, actual
-			spend.State = "settled"
-			if action == "release" {
-				spend.State = "released"
-			}
-			spend.UpdatedAt = at
-			spend.BalanceAfter = new(wallet.Available)
-			if err = tx.Save(&spend).Error; err != nil {
-				return err
-			}
-			if err = repayAvailableCheckinBorrowing(tx, wallet); err != nil {
-				return err
-			}
-			return tx.Save(wallet).Error
-		} else {
-			return errors.New("该记录当前不允许此核对操作")
-		}
-		spend.UpdatedAt = at
-		return tx.Save(&spend).Error
-	})
-}
 
 type XingyaCheckinSettings struct {
 	ClaimEnabled     bool    `json:"claim_enabled"`
@@ -377,14 +309,16 @@ type XingyaCheckinGrant struct {
 func (XingyaCheckinGrant) TableName() string { return "xingya_checkin_grants" }
 
 type XingyaCheckinSpend struct {
-	RequestID        string `json:"request_id" gorm:"primaryKey;type:varchar(191)"`
-	UserID           int    `json:"user_id" gorm:"not null;index:idx_xingya_checkin_spend_user"`
-	TokenID          int    `json:"token_id"`
-	Group            string `json:"group"`
-	Model            string `json:"model"`
-	Reserved         int    `json:"reserved" gorm:"type:bigint"`
-	ActualQuota      int    `json:"actual_quota" gorm:"type:bigint"`
-	Consumed         int    `json:"consumed" gorm:"type:bigint"`
+	RequestID   string `json:"request_id" gorm:"primaryKey;type:varchar(191)"`
+	UserID      int    `json:"user_id" gorm:"not null;index:idx_xingya_checkin_spend_user"`
+	TokenID     int    `json:"token_id"`
+	Group       string `json:"group"`
+	Model       string `json:"model"`
+	Reserved    int    `json:"reserved" gorm:"type:bigint"`
+	ActualQuota int    `json:"actual_quota" gorm:"type:bigint"`
+	Consumed    int    `json:"consumed" gorm:"type:bigint"`
+	// UnpaidQuota is the part above the debt ceiling that the platform absorbed.
+	// It is audit-only now: it neither blocks the user nor becomes a review row.
 	UnpaidQuota      int    `json:"unpaid_quota" gorm:"type:bigint"`
 	BorrowedReserved int    `json:"borrowed_reserved" gorm:"type:bigint;not null;default:0"`
 	BorrowedConsumed int    `json:"borrowed_consumed" gorm:"type:bigint;not null;default:0"`
@@ -402,8 +336,8 @@ func GetXingyaCheckinWallet(userID int) (XingyaCheckinWallet, error) {
 }
 
 func validCheckinWallet(w XingyaCheckinWallet) bool {
-	limit, err := CheckinOverdraftLimit()
-	return err == nil && w.Granted >= 0 && w.Granted <= common.MaxWalletQuota && w.Borrowed >= 0 && w.Borrowed <= limit && w.Available >= -w.Borrowed && w.Available <= common.MaxWalletQuota-w.Borrowed && w.Reserved >= 0 && w.Consumed >= 0 && w.Expired >= 0 &&
+	limit, err := CheckinDebtLimit()
+	return err == nil && w.Granted >= 0 && w.Granted <= common.MaxWalletQuota && w.Borrowed >= 0 && w.Borrowed <= limit && w.Available >= -w.Borrowed && w.Available+w.Borrowed >= 0 && w.Available <= common.MaxWalletQuota-w.Borrowed && w.Reserved >= 0 && w.Consumed >= 0 && w.Expired >= 0 &&
 		w.Reserved <= common.MaxWalletQuota && w.Consumed <= common.MaxWalletQuota && w.Expired <= common.MaxWalletQuota &&
 		w.Granted == w.Available+w.Reserved+w.Consumed+w.Expired
 }
@@ -531,6 +465,7 @@ func ClaimXingyaCheckin(userID int, now time.Time) (*XingyaCheckinGrant, bool, e
 }
 
 // ReserveCheckinQuota sets the total reservation for one server-generated request.
+// A request may start only when the unspent balance covers its minimum charge.
 // Repeating the same target never subtracts twice. Wallet-before-spend is the lock order.
 func ReserveCheckinQuota(spend XingyaCheckinSpend, target int) error {
 	return reserveCheckinQuotaAt(spend, target, 0)
@@ -552,6 +487,9 @@ func reserveCheckinQuotaAt(spend XingyaCheckinSpend, target int, at int64) error
 		if err = expireCheckinCredit(tx, w, at); err != nil {
 			return err
 		}
+		if err = releaseStaleCheckinReservations(tx, w, at); err != nil {
+			return err
+		}
 		var existing XingyaCheckinSpend
 		err = lockForUpdate(tx).Where("request_id = ?", spend.RequestID).Take(&existing).Error
 		if err == nil {
@@ -565,25 +503,12 @@ func reserveCheckinQuotaAt(spend XingyaCheckinSpend, target int, at int64) error
 		} else {
 			return err
 		}
-		var unsettled int64
-		pending := tx.Model(&XingyaCheckinSpend{}).Where("user_id = ? AND (state = ? OR (state = ? AND updated_at < ?))", spend.UserID, "review", "reserved", at-24*60*60)
-		if err = pending.Count(&unsettled).Error; err != nil {
-			return err
-		}
-		if unsettled > 0 && (existing.RequestID == "" || target > spend.Reserved) {
-			rejected = ErrCheckinReconciliation
-			return nil
-		}
 		delta := target - spend.Reserved
 		if w.Reserved < 0 || delta > 0 && w.Reserved > common.MaxWalletQuota-delta {
 			return errors.New("签到钱包数据无效")
 		}
-		limit, err := CheckinOverdraftLimit()
-		if err != nil {
-			return err
-		}
-		if delta > 0 && w.Available+limit < delta {
-			rejected = ErrCheckinInsufficient
+		if delta > 0 && w.Available+w.Borrowed < delta {
+			rejected = fmt.Errorf("%w：本次请求至少需要 %s，当前签到可用 %s", ErrCheckinInsufficient, logger.FormatQuota(delta), logger.FormatQuota(w.Available+w.Borrowed))
 			return nil
 		}
 		if delta < 0 && w.Reserved < -delta {
@@ -605,8 +530,24 @@ func reserveCheckinQuotaAt(spend XingyaCheckinSpend, target int, at int64) error
 	return rejected
 }
 
-// Finalization is durable and idempotent, including zero-cost requests. An
-// unexpected upstream overcharge never touches ordinary money or disappears.
+// releaseStaleCheckinReservations recovers crash leftovers without blocking the
+// user: a reservation older than 24 hours is released, never charged.
+func releaseStaleCheckinReservations(tx *gorm.DB, w *XingyaCheckinWallet, at int64) error {
+	var stale []XingyaCheckinSpend
+	if err := tx.Where("user_id = ? AND state = ? AND updated_at < ?", w.UserID, "reserved", at-24*60*60).Order("updated_at, request_id").Limit(100).Find(&stale).Error; err != nil {
+		return err
+	}
+	for i := range stale {
+		if err := finalizeCheckinSpendLocked(tx, w, stale[i].RequestID, 0, true, at); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Finalization is durable and idempotent, including zero-cost requests. A real
+// cost above the reserved minimum is charged even when that makes the balance
+// negative; only the part above the debt ceiling is absorbed and audited.
 func FinalizeCheckinSpend(userID int, requestID string, actual int, release bool) error {
 	return finalizeCheckinSpendAt(userID, requestID, actual, release, 0)
 }
@@ -623,61 +564,92 @@ func finalizeCheckinSpendAt(userID int, requestID string, actual int, release bo
 		if at == 0 {
 			at = common.GetTimestamp()
 		}
-		if err = expireCheckinCredit(tx, w, at); err != nil {
-			return err
-		}
-		var spend XingyaCheckinSpend
-		if err = lockForUpdate(tx).Where("request_id = ? AND user_id = ?", requestID, userID).Take(&spend).Error; err != nil {
-			return err
-		}
-		if spend.State != "reserved" {
-			return nil
-		}
-		if w.Reserved < spend.Reserved {
-			return errors.New("签到预扣资金不一致")
-		}
-		charge := actual
-		if release {
-			charge = 0
-		}
-		paid := min(charge, spend.Reserved)
-		limit, err := CheckinOverdraftLimit()
+		return finalizeCheckinSpendLocked(tx, w, requestID, actual, release, at)
+	})
+}
+
+// finalizeCheckinSpendLocked expects the wallet row to be locked by the caller.
+func finalizeCheckinSpendLocked(tx *gorm.DB, w *XingyaCheckinWallet, requestID string, actual int, release bool, at int64) error {
+	if err := expireCheckinCredit(tx, w, at); err != nil {
+		return err
+	}
+	var spend XingyaCheckinSpend
+	if err := lockForUpdate(tx).Where("request_id = ? AND user_id = ?", requestID, w.UserID).Take(&spend).Error; err != nil {
+		return err
+	}
+	if spend.State != "reserved" {
+		return nil
+	}
+	if w.Reserved < spend.Reserved {
+		return errors.New("签到预扣资金不一致")
+	}
+	charge := actual
+	if release {
+		charge = 0
+	}
+	if err := settleCheckinAllocations(tx, w, &spend, min(charge, spend.Reserved), at); err != nil {
+		return err
+	}
+	absorbed := 0
+	if charge > spend.Reserved {
+		debtAbsorbed, err := chargeCheckinOverage(w, &spend, charge-spend.Reserved)
 		if err != nil {
 			return err
 		}
-		if charge > spend.Reserved {
-			paid = min(charge, spend.Reserved+max(0, w.Available+limit))
-			if err = adjustCheckinAllocations(tx, w, &spend, paid, at); err != nil {
-				return err
-			}
-			spend.Reserved = paid
+		absorbed = debtAbsorbed
+		if absorbed > 0 {
+			common.SysError(fmt.Sprintf("checkin settlement cost beyond the debt ceiling: request=%s user=%d absorbed=%d", spend.RequestID, spend.UserID, absorbed))
 		}
-		if w.Consumed > common.MaxWalletQuota-paid {
-			return errors.New("签到累计消费超过上限")
+	}
+	if w.Consumed > common.MaxWalletQuota {
+		return errors.New("签到累计消费超过上限")
+	}
+	spend.ActualQuota = charge
+	spend.Consumed = charge - absorbed
+	spend.UnpaidQuota = absorbed
+	spend.State = "settled"
+	if release {
+		spend.State = "released"
+	}
+	spend.UpdatedAt = at
+	if err := tx.Save(&spend).Error; err != nil {
+		return err
+	}
+	if err := repayAvailableCheckinBorrowing(tx, w); err != nil {
+		return err
+	}
+	if err := tx.Model(&XingyaCheckinSpend{}).Where("request_id = ?", spend.RequestID).Update("balance_after", w.Available).Error; err != nil {
+		return err
+	}
+	return tx.Save(w).Error
+}
+
+// chargeCheckinOverage turns the part above the reservation into wallet debt.
+// The debt ceiling bounds the negative balance; the remainder is absorbed and
+// recorded instead of rejecting a charge the upstream already delivered.
+func chargeCheckinOverage(w *XingyaCheckinWallet, spend *XingyaCheckinSpend, extra int) (int, error) {
+	if extra <= 0 {
+		return 0, nil
+	}
+	limit, err := CheckinDebtLimit()
+	if err != nil {
+		return 0, err
+	}
+	headroom := limit - w.Borrowed
+	if headroom < 0 {
+		headroom = 0
+	}
+	debt := min(extra, headroom)
+	if debt > 0 {
+		if w.Available < -common.MaxWalletQuota+debt || w.Consumed > common.MaxWalletQuota-debt || spend.BorrowedConsumed > common.MaxWalletQuota-debt {
+			return 0, errors.New("签到透支金额超过上限")
 		}
-		if err = settleCheckinAllocations(tx, w, &spend, paid, at); err != nil {
-			return err
-		}
-		spend.ActualQuota = charge
-		spend.Consumed = paid
-		spend.UnpaidQuota = charge - paid
-		spend.State = "settled"
-		if release {
-			spend.State = "released"
-		}
-		if spend.UnpaidQuota > 0 {
-			spend.State = "review"
-		}
-		spend.UpdatedAt = at
-		spend.BalanceAfter = new(w.Available)
-		if err = tx.Save(&spend).Error; err != nil {
-			return err
-		}
-		if err = repayAvailableCheckinBorrowing(tx, w); err != nil {
-			return err
-		}
-		return tx.Save(w).Error
-	})
+		w.Available -= debt
+		w.Consumed += debt
+		w.Borrowed += debt
+		spend.BorrowedConsumed += debt
+	}
+	return extra - debt, nil
 }
 
 // CreateCheckinToken serializes repeated button requests without changing user

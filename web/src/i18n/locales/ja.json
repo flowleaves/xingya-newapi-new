@@ -7342,7 +7342,6 @@
     "{{count}} repeated groups": "{{count}} repeated groups",
     "{{count}} requests refunded": "{{count}} requests refunded",
     "192.168.1.10, 10.0.0.0/8": "192.168.1.10, 10.0.0.0/8",
-    "A check-in request needs review. Contact your administrator or switch to a regular key.": "チェックインのリクエストに確認が必要です。管理者に連絡するか通常キーに切り替えてください。",
     "A little sprout every day, a little more possibility.": "毎日の芽点で、可能性を広げよう。",
     "About Xingya": "About Xingya",
     "About Xingya · Tutorial": "About Xingya · Tutorial",
@@ -7624,7 +7623,6 @@
     "Invalid refunded check-in qualifying spend.": "チェックイン条件の返金額が不正です。",
     "An extra check-in is available today.": "今日は追加でチェックインできます。",
     "Extra check-in reward": "追加チェックイン報酬",
-    "Check-in balance can reach −10 sprouts. New rewards repay overdrafts first.": "チェックイン残高は−10芽点まで利用可能です。新しい報酬は先に不足分の返済に充てられます。",
     "Check-in overdraft": "チェックイン不足分",
     "Separate check-in balance": "独立したチェックイン残高",
     "Create the check-in group normally, then select it here. Changing the group moves dedicated keys; existing credit and expiry dates are retained. Native token and request pricing are supported.": "通常の方法でグループを作成し、ここで選択します。変更時は専用キーを移行し、既存の残高と有効期限を維持します。トークン課金とリクエスト課金に対応します。",
@@ -7636,6 +7634,8 @@
     "Check-in balance after this request": "このリクエストの精算後残高",
     "Unpaid check-in cost · pending review": "未払いチェックイン費用・確認待ち",
     "Invalid check-in eligibility record.": "チェックイン資格の記録が無効です。",
-    "Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "毎日のチェックインは北京時間に基づきます。管理者は当日の追加受け取りを許可できます。専用キーは設定されたグループとモデル料金を使用します。従来の報酬は通常残高に残り、チェックイン消費は招待報酬の条件に含まれません。"
+    "Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.": "毎日のチェックインは北京時間に基づきます。管理者は当日の追加受け取りを許可できます。専用キーは設定されたグループとモデル料金を使用します。従来の報酬は通常残高に残り、チェックイン消費は招待報酬の条件に含まれません。",
+    "Check-in balance is negative. The next reward repays it first and the regular balance is never charged.": "チェックイン残高がマイナスです。次回の報酬から優先的に補填され、通常残高は引き落とされません。",
+    "Check-in balance can go negative up to −100 sprouts. New rewards repay it first.": "チェックイン残高は最大 −100 芽点までマイナスになり、新しい報酬から優先的に補填されます。"
   }
 }

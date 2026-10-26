@@ -196,10 +196,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				newAPIError = service.CheckinBillingError(errors.New("签到密钥不能更换分组"))
 				break
 			}
-			if budget, err := service.CheckinRequestBudget(relayInfo); err != nil {
+			if minimum, err := service.CheckinRequestMinimum(relayInfo); err != nil {
 				newAPIError = service.CheckinBillingError(err)
 				break
-			} else if err = relayInfo.Billing.Reserve(budget); err != nil {
+			} else if err = relayInfo.Billing.Reserve(minimum); err != nil {
 				newAPIError = service.CheckinBillingError(err)
 				break
 			}
