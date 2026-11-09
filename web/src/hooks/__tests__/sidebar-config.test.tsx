@@ -95,7 +95,7 @@ function sidebarFor(admin?: object, user?: object, canConfigure = true) {
 }
 
 describe('security sidebar visibility', () => {
-  it('old configurations keep security ordering and add Invite Rewards', () => {
+  it('old configurations keep security ordering and retained Xingya entries', () => {
     const { result } = sidebarFor(
       { personal: { enabled: true, personal: true, topup: true } },
       { personal: { enabled: true, personal: true } }
@@ -103,7 +103,9 @@ describe('security sidebar visibility', () => {
     const personalTitles = result.current
       .find((group) => group.id === 'personal')
       ?.items.map((item) => item.title) ?? []
-    expect(personalTitles).toContain('Invite Rewards')
+    expect(personalTitles).toContain('Recharge Center')
+    expect(personalTitles).toContain('Daily Check-in')
+    expect(personalTitles).not.toContain('Invite Rewards')
     expect(personalTitles.indexOf('Security & Access')).toBe(
       personalTitles.indexOf('Profile') + 1
     )

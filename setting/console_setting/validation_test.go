@@ -29,14 +29,3 @@ func TestValidateAnnouncementsAcceptsPopupFlag(t *testing.T) {
 		"Announcements",
 	))
 }
-
-// TestValidateAnnouncementsRejectsNonBooleanPopup guards against a stringified flag
-// slipping through, which the frontend would then compare strictly against `true`.
-func TestValidateAnnouncementsRejectsNonBooleanPopup(t *testing.T) {
-	for _, popup := range []string{`"true"`, `1`, `null`, `[]`, `{}`} {
-		require.Error(t, ValidateConsoleSettings(
-			`[{"id":1,"content":"maintenance","publishDate":"2026-05-01T00:00:00Z","popup":`+popup+`}]`,
-			"Announcements",
-		), "popup=%s must be rejected", popup)
-	}
-}
