@@ -113,9 +113,9 @@ type User struct {
 	AuthVersion          int64                      `json:"-" gorm:"type:bigint;not null;default:1;column:auth_version"`
 	AdminPermissions     map[string]map[string]bool `json:"admin_permissions,omitempty" gorm:"-:all"`
 
-	// SuccessCallsAfterInviteWindow is retained for historical schema and projection
-	// compatibility. New reward progress lives in xingya_invite_reward_pending, so
-	// this legacy column is no longer written on the successful-billing hot path.
+	// SuccessCallsAfterInviteWindow is retained for historical schema compatibility.
+	// The deferred invite ledger that wrote it has been retired; the column stays so
+	// existing databases keep the same shape and no destructive migration is needed.
 	SuccessCallsAfterInviteWindow int `json:"-" gorm:"type:int;not null;default:0;column:success_calls_after_invite_window"`
 }
 
