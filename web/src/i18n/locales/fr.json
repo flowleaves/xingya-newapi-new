@@ -7749,6 +7749,8 @@
     "Include wallet top-ups": "Include wallet top-ups",
     "Count paid wallet recharges": "Count paid wallet recharges",
     "Include redemption codes": "Include redemption codes",
-    "Count quota redeemed with a code": "Count quota redeemed with a code"
+    "Count quota redeemed with a code": "Count quota redeemed with a code",
+    "How to use: create a check-in key, then call models in the check-in group. Check-in credit is used first.": "How to use: create a check-in key, then call models in the check-in group. Check-in credit is used first.",
+    "Check-ins follow Beijing time. Check-in credit only works with check-in keys.": "Check-ins follow Beijing time. Check-in credit only works with check-in keys."
   }
 }

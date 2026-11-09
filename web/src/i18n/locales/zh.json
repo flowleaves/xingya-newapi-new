@@ -7749,6 +7749,8 @@
     "Include wallet top-ups": "计入钱包充值",
     "Count paid wallet recharges": "统计已支付的钱包充值",
     "Include redemption codes": "计入兑换码",
-    "Count quota redeemed with a code": "统计通过兑换码到账的额度"
+    "Count quota redeemed with a code": "统计通过兑换码到账的额度",
+    "How to use: create a check-in key, then call models in the check-in group. Check-in credit is used first.": "使用方式：创建签到专用 Key，在签到分组内调用模型，优先扣除签到额度。",
+    "Check-ins follow Beijing time. Check-in credit only works with check-in keys.": "签到以北京时间为准；签到额度仅适用于签到专用 Key。"
   }
 }

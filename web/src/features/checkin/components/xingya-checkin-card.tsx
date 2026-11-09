@@ -42,10 +42,7 @@ import { CheckinCreditAmounts } from './checkin-credit-amounts'
 import { CheckinHistory } from './checkin-history'
 import { CheckinKeyDialog } from './checkin-key-dialog'
 
-export function XingyaCheckinCard(props: {
-  compact?: boolean
-  onClaimed?: () => void
-}) {
+export function XingyaCheckinCard() {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const { status } = useStatus()
@@ -59,7 +56,6 @@ export function XingyaCheckinCard(props: {
     try {
       await checkin.claim.mutateAsync(token)
       setChallenge(false)
-      props.onClaimed?.()
     } catch (error) {
       setChallengeKey((key) => key + 1)
       handleServerError(error, t('Check-in failed'))
@@ -191,19 +187,9 @@ export function XingyaCheckinCard(props: {
                 )}
               </p>
             )}
-            <p className='text-muted-foreground text-xs'>
-              {t(
-                'Separate credit · fixed group · no self-refund or regular-balance fallback'
-              )}
-            </p>
             <p className='text-muted-foreground text-xs leading-relaxed'>
               {t(
-                'Check-in balance can go negative up to −100 sprouts. New rewards repay it first.'
-              )}
-            </p>
-            <p className='text-muted-foreground text-xs leading-relaxed'>
-              {t(
-                'Each award is valid for 30 days. Credit expiring first is used first.'
+                'How to use: create a check-in key, then call models in the check-in group. Check-in credit is used first.'
               )}
             </p>
             {data.expiry.next_expires_at > 0 && (
@@ -255,61 +241,45 @@ export function XingyaCheckinCard(props: {
               </Button>
             </div>
           </div>
-          {props.compact && (
-            <Button
-              variant='link'
-              className='min-h-11 w-full'
-              render={<Link to='/checkin' />}
-            >
-              {t('Check-in history')}
-            </Button>
-          )}
         </CardContent>
       </Card>
-      {!props.compact && (
-        <>
-          <div className='grid grid-cols-2 gap-3'>
-            <Card>
-              <CardContent className='p-4'>
-                <p className='text-muted-foreground text-xs'>
-                  {t('New credit this month')}
-                </p>
-                <p className='mt-1 text-lg font-semibold break-all tabular-nums'>
-                  {formatQuotaWithCurrency(data.month_quota)}
-                </p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className='p-4'>
-                <p className='text-muted-foreground text-xs'>
-                  {t('Check-in credit consumed')}
-                </p>
-                <p className='mt-1 text-lg font-semibold break-all tabular-nums'>
-                  {formatQuotaWithCurrency(data.wallet.consumed)}
-                </p>
-              </CardContent>
-            </Card>
-          </div>
-          <CheckinHistory
-            month={data.month}
-            today={data.today}
-            records={data.records}
-            onMonthChange={setMonth}
-          />
-          <p className='text-muted-foreground px-1 text-xs leading-relaxed'>
-            {t(
-              'Daily check-ins use Beijing time. Administrators may open an extra claim today. Dedicated keys use the configured group and its model pricing. Legacy rewards remain in your ordinary balance. Check-in spending does not qualify for invite rewards.'
-            )}
-          </p>
-        </>
-      )}
+      <div className='grid grid-cols-2 gap-3'>
+        <Card>
+          <CardContent className='p-4'>
+            <p className='text-muted-foreground text-xs'>
+              {t('New credit this month')}
+            </p>
+            <p className='mt-1 text-lg font-semibold break-all tabular-nums'>
+              {formatQuotaWithCurrency(data.month_quota)}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className='p-4'>
+            <p className='text-muted-foreground text-xs'>
+              {t('Check-in credit consumed')}
+            </p>
+            <p className='mt-1 text-lg font-semibold break-all tabular-nums'>
+              {formatQuotaWithCurrency(data.wallet.consumed)}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+      <CheckinHistory
+        month={data.month}
+        today={data.today}
+        records={data.records}
+        onMonthChange={setMonth}
+      />
+      <p className='text-muted-foreground px-1 text-xs leading-relaxed'>
+        {t(
+          'Check-ins follow Beijing time. Check-in credit only works with check-in keys.'
+        )}
+      </p>
       <Dialog
         open={creditDetails}
         onOpenChange={setCreditDetails}
         title={t('Check-in credit details')}
-        description={t(
-          'Each award is valid for 30 days. Credit expiring first is used first.'
-        )}
         contentClassName='sm:max-w-md'
       >
         <div className='flex flex-col gap-4'>

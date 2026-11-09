@@ -20,7 +20,6 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
-import { XingyaCheckinCard } from '@/features/checkin/components/xingya-checkin-card'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { getSelf } from '@/lib/api'
@@ -289,14 +288,7 @@ export function Wallet(props: WalletProps) {
         <SectionPageLayout.Title>{t('Wallet')}</SectionPageLayout.Title>
         <SectionPageLayout.Content>
           <div className='mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-5'>
-            <WalletStatsCard
-              user={user}
-              loading={userLoading}
-              checkinEnabled={status?.xingya_checkin_available === true}
-            />
-            {status?.xingya_checkin_available === true && (
-              <XingyaCheckinCard compact onClaimed={fetchUser} />
-            )}
+            <WalletStatsCard user={user} loading={userLoading} />
 
             <div
               className={

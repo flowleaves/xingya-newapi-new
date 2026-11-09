@@ -59,7 +59,7 @@ function fixture(): XingyaCheckinStatus {
   }
 }
 
-async function renderCards(props: { full?: boolean; double?: boolean } = {}) {
+async function renderCards(props: { double?: boolean } = {}) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
@@ -67,8 +67,8 @@ async function renderCards(props: { full?: boolean; double?: boolean } = {}) {
     routeTree: createRootRoute({
       component: () => (
         <>
-          <XingyaCheckinCard compact={!props.full} />
-          {props.double && <XingyaCheckinCard compact />}
+          <XingyaCheckinCard />
+          {props.double && <XingyaCheckinCard />}
         </>
       ),
     }),
@@ -129,8 +129,8 @@ test('all visible entry points refresh after a claim on the new endpoint', async
     routeTree: createRootRoute({
       component: () => (
         <>
-          <XingyaCheckinCard compact />
-          <XingyaCheckinCard compact />
+          <XingyaCheckinCard />
+          <XingyaCheckinCard />
         </>
       ),
     }),
@@ -172,7 +172,7 @@ test('paused claims retain the balance, history and exact model-group link', asy
   vi.spyOn(api, 'get').mockImplementation(async (url) => ({
     data: { success: true, data: url === '/api/status' ? {} : data },
   }))
-  await renderCards({ full: true })
+  await renderCards()
   expect(
     screen.getByRole('button', { name: 'Check-in claims are paused' })
   ).toBeDisabled()
@@ -200,7 +200,7 @@ test('failed status never appears as a zero wallet', async () => {
   })
   render(
     <QueryClientProvider client={client}>
-      <XingyaCheckinCard compact />
+      <XingyaCheckinCard />
     </QueryClientProvider>
   )
   expect(
@@ -430,8 +430,13 @@ test('negative check-in balances and an extra daily round are visible', async ()
     screen.getByText('An extra check-in is available today.')
   ).toBeVisible()
   expect(
-    screen.getByText(
+    screen.queryByText(
       'Check-in balance can go negative up to −100 sprouts. New rewards repay it first.'
+    )
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByText(
+      'How to use: create a check-in key, then call models in the check-in group. Check-in credit is used first.'
     )
   ).toBeVisible()
   expect(
