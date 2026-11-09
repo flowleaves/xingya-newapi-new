@@ -34,7 +34,7 @@ import { Button } from '@/components/ui/button'
 const API_BASE = 'https://xingya.site/v1'
 const QQ_GROUP = '906445439'
 const QQ_JOIN_URL = 'https://qm.qq.com/q/24BrdZ7sCQ'
-const SHOP_URL = 'https://catfk.com/shop/X62LLH60'
+const SHOP_URL = 'https://www.16688.com.cn/shop/XINGYA'
 
 interface XingyaHomeProps {
   isAuthenticated?: boolean

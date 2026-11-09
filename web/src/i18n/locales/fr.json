@@ -7754,6 +7754,8 @@
     "Check-ins follow Beijing time. Check-in credit only works with check-in keys.": "Check-ins follow Beijing time. Check-in credit only works with check-in keys.",
     "Notes": "Notes",
     "Within {{days}} days of a friend’s sign-up, wallet top-ups and redemption codes earn {{ratio}}% of the credited amount, up to {{cap}} sprouts per friend.": "Within {{days}} days of a friend’s sign-up, wallet top-ups and redemption codes earn {{ratio}}% of the credited amount, up to {{cap}} sprouts per friend.",
-    "Rebates go to your invite balance and can be transferred to your wallet at any time.": "Rebates go to your invite balance and can be transferred to your wallet at any time."
+    "Rebates go to your invite balance and can be transferred to your wallet at any time.": "Rebates go to your invite balance and can be transferred to your wallet at any time.",
+    "Tap the button below to create a check-in key, then call models with it. Check-in credit is used first.": "Tap the button below to create a check-in key, then call models with it. Check-in credit is used first.",
+    "If the page does not load, use \"Open in new window\" at the top right.": "If the page does not load, use \"Open in new window\" at the top right."
   }
 }

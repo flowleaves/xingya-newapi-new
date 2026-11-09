@@ -48,6 +48,9 @@ export function RechargeCenter(props: RechargeCenterProps) {
           {t('Recharge Center')}
         </div>
         <div className='flex items-center gap-2'>
+          <span className='text-muted-foreground hidden text-xs sm:inline'>
+            {t('If the page does not load, use "Open in new window" at the top right.')}
+          </span>
           <Button
             variant='outline'
             size='sm'
@@ -88,13 +91,6 @@ export function RechargeCenter(props: RechargeCenterProps) {
         // oxlint-disable-next-line react/iframe-missing-sandbox
         sandbox='allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-scripts'
       />
-
-      <p className='text-muted-foreground/70 flex items-center gap-1.5 px-4 py-2 text-xs'>
-        <Banknote className='size-3.5' aria-hidden='true' />
-        {t(
-          'The shop is embedded below. If it refuses to load, use "Open in new window" above.'
-        )}
-      </p>
     </div>
   )
 }

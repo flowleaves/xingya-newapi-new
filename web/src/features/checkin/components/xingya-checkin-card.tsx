@@ -187,7 +187,7 @@ export function XingyaCheckinCard() {
             )}
             <p className='bg-muted/60 text-foreground rounded-lg px-3 py-2 text-xs leading-relaxed font-semibold'>
               {t(
-                'How to use: create a check-in key, then call models in the check-in group. Check-in credit is used first.'
+                'Tap the button below to create a check-in key, then call models with it. Check-in credit is used first.'
               )}
             </p>
             {data.expiry.next_expires_at > 0 && (

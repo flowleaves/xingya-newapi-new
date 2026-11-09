@@ -421,7 +421,7 @@ test('negative check-in balances and an extra daily round are visible', async ()
   ).not.toBeInTheDocument()
   expect(
     screen.getByText(
-      'How to use: create a check-in key, then call models in the check-in group. Check-in credit is used first.'
+      'Tap the button below to create a check-in key, then call models with it. Check-in credit is used first.'
     )
   ).toBeVisible()
   expect(

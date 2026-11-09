@@ -7754,6 +7754,8 @@
     "Check-ins follow Beijing time. Check-in credit only works with check-in keys.": "签到以北京时间为准；签到额度仅适用于签到专用 Key。",
     "Notes": "说明",
     "Within {{days}} days of a friend’s sign-up, wallet top-ups and redemption codes earn {{ratio}}% of the credited amount, up to {{cap}} sprouts per friend.": "好友注册后 {{days}} 天内完成钱包充值或兑换，按实际到账额度的 {{ratio}}% 返利；单个好友累计上限 {{cap}} 芽点。",
-    "Rebates go to your invite balance and can be transferred to your wallet at any time.": "返利计入邀请返利余额，可随时转入钱包。"
+    "Rebates go to your invite balance and can be transferred to your wallet at any time.": "返利计入邀请返利余额，可随时转入钱包。",
+    "Tap the button below to create a check-in key, then call models with it. Check-in credit is used first.": "点击下方按钮创建签到专用 Key，使用专用密钥调用模型，优先扣除签到额度。",
+    "If the page does not load, use \"Open in new window\" at the top right.": "若页面无法显示，请使用右上角「新窗口打开」。"
   }
 }

@@ -19,8 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import { RechargeCenter } from './components/recharge-center'
 
 /** 充值1 —— the card shop that the operator keeps. */
-export const CATFK_SHOP_URL = 'https://catfk.com/shop/X62LLH60'
+export const SHOP_URL = 'https://www.16688.com.cn/shop/XINGYA'
 
 export function Recharge() {
-  return <RechargeCenter shopUrl={CATFK_SHOP_URL} />
+  return <RechargeCenter shopUrl={SHOP_URL} />
 }
