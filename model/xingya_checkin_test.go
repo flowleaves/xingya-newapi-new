@@ -596,32 +596,6 @@ func TestXingyaCheckinPostgres(t *testing.T) {
 			require.Error(t, DoSelfRefundSubscription(user.Id, row.Id, 1, 123, 123, "empty_response", row.RequestId, RefundLimits{}))
 		}
 	})
-	t.Run("invite migration runs once and startup preserves credits", func(t *testing.T) {
-		invitee, inviter := newUser(), newUser()
-		reward := XingyaInviteRewardPending{InviteeId: invitee.Id, InviterId: inviter.Id, State: InviteRewardStatePending, QualifyingCalls: InviteRewardRequiredCalls, QualifyingQuota: 450000, InviterQuota: 100}
-		require.NoError(t, DB.Create(&reward).Error)
-		assert.False(t, RecordSuccessfulBillableCall(invitee.Id, 100000, CheckinQuotaSource))
-		require.NoError(t, DB.First(&reward, reward.Id).Error)
-		assert.Equal(t, 450000, reward.QualifyingQuota)
-		require.NoError(t, DB.Where("key = ?", "xingya_migration.invite_spend_080").Delete(&Option{}).Error)
-		require.NoError(t, DB.Save(&Option{Key: "invite_reward_setting.required_consume_usd", Value: "1"}).Error)
-		require.NoError(t, InitXingyaTables(DB))
-		var gate Option
-		require.NoError(t, DB.First(&gate, "key = ?", "invite_reward_setting.required_consume_usd").Error)
-		assert.Equal(t, "0.8", gate.Value)
-		require.NoError(t, DB.First(&reward, reward.Id).Error)
-		assert.Equal(t, InviteRewardStateEligible, reward.State)
-		assert.Greater(t, reward.AutoGrantAt, reward.EligibleAt)
-		require.NoError(t, DB.Model(&gate).Update("value", "0.9").Error)
-		require.NoError(t, InitXingyaTables(DB))
-		require.NoError(t, DB.First(&gate, "key = ?", gate.Key).Error)
-		assert.Equal(t, "0.9", gate.Value)
-		settings := operation_setting.GetInviteRewardSetting()
-		old := settings.RequiredConsumeUSD
-		settings.RequiredConsumeUSD = 0.8
-		t.Cleanup(func() { settings.RequiredConsumeUSD = old })
-		assert.Equal(t, 400000, RequiredConsumeQuota())
-	})
 	assertLedger := func(t *testing.T, userID int) XingyaCheckinWallet {
 		t.Helper()
 		wallet, err := GetXingyaCheckinWallet(userID)

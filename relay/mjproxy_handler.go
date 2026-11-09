@@ -131,7 +131,7 @@ func RelayMidjourneyNotify(c *gin.Context) *dto.MidjourneyResponse {
 	midjourneyTask.VideoUrls = string(videoUrlsStr)
 	midjourneyTask.Status = midjRequest.Status
 	midjourneyTask.FailReason = midjRequest.FailReason
-	updated, updateErr := midjourneyTask.UpdateWithStatus(previousStatus)
+	_, updateErr := midjourneyTask.UpdateWithStatus(previousStatus)
 	err = updateErr
 	if err != nil {
 		return &dto.MidjourneyResponse{
@@ -139,10 +139,6 @@ func RelayMidjourneyNotify(c *gin.Context) *dto.MidjourneyResponse {
 			Description: "update_midjourney_task_failed",
 		}
 	}
-	if updated && previousStatus != "SUCCESS" && midjourneyTask.Status == "SUCCESS" && midjourneyTask.Quota > 0 {
-		model.RecordSuccessfulBillableCall(midjourneyTask.UserId, midjourneyTask.Quota)
-	}
-
 	return nil
 }
 
@@ -301,9 +297,6 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 		})
 		model.UpdateUserUsedQuotaAndRequestCount(info.UserId, midjourneyTask.Quota)
 		model.UpdateChannelUsedQuota(billingChannelId, midjourneyTask.Quota)
-		if midjourneyTask.Quota > 0 {
-			model.RecordSuccessfulBillableCall(info.UserId, midjourneyTask.Quota)
-		}
 	}
 	c.Writer.WriteHeader(mjResp.StatusCode)
 	respBody, err := common.Marshal(midjResponse)
@@ -683,9 +676,6 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 		})
 		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, midjourneyTask.Quota)
 		model.UpdateChannelUsedQuota(billingChannelId, midjourneyTask.Quota)
-		if midjourneyTask.Status == "SUCCESS" && midjourneyTask.Quota > 0 {
-			model.RecordSuccessfulBillableCall(relayInfo.UserId, midjourneyTask.Quota)
-		}
 	}
 
 	if midjResponse.Code == 22 { //22-排队中，说明任务已存在

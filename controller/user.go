@@ -273,7 +273,6 @@ func Register(c *gin.Context) {
 	}
 	affCode := user.AffCode // this code is the inviter's code, not the user's own code
 	inviterId, _ := model.GetUserIdByAffCode(affCode)
-	trialReservation := model.BeginRegistrationTrial(c.Request.Context(), c.ClientIP(), c.Request.UserAgent())
 	cleanUser := model.User{
 		Username:    user.Username,
 		Password:    user.Password,
@@ -284,8 +283,7 @@ func Register(c *gin.Context) {
 	if common.EmailVerificationEnabled {
 		cleanUser.Email = user.Email
 	}
-	if err := cleanUser.InsertRegistration(inviterId, trialReservation.Quota()); err != nil {
-		trialReservation.Rollback()
+	if err := cleanUser.Insert(inviterId); err != nil {
 		if errors.Is(err, model.ErrEmailAlreadyTaken) {
 			common.ApiErrorT(c, "Email address is already in use")
 			return
@@ -293,18 +291,12 @@ func Register(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	trialReservation.Commit()
 
 	// 获取插入后的用户ID
 	var insertedUser model.User
 	if err := model.DB.Where("username = ?", cleanUser.Username).First(&insertedUser).Error; err != nil {
 		common.ApiErrorT(c, "User registration failed or user ID retrieval failed")
 		return
-	}
-	// Record the device only after the account exists; a failure here must not reject a
-	// registration that already succeeded.
-	if err := model.RecordRegistrationDevice(nil, insertedUser.Id, c.ClientIP(), c.Request.UserAgent()); err != nil {
-		common.SysLog("failed to record registration device: " + err.Error())
 	}
 	// 生成默认令牌
 	if constant.GenerateDefaultToken {

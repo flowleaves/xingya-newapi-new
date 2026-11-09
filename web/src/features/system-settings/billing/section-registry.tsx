@@ -22,7 +22,6 @@ import {
   CheckinSettingsSection,
   type CheckinTierValue,
 } from '../general/checkin-settings-section'
-import { InviteRewardSettingsSection } from '../general/invite-reward-settings-section'
 import { PricingSection } from '../general/pricing-section'
 import { QuotaSettingsSection } from '../general/quota-settings-section'
 import { SelfRefundSettingsSection } from '../general/self-refund-settings-section'
@@ -274,18 +273,6 @@ const BILLING_SECTIONS = [
           daily_max_quota: settings['self_refund_setting.daily_max_quota'] ?? 0,
           min_refund_quota:
             settings['self_refund_setting.min_refund_quota'] ?? 0,
-        }}
-      />
-    ),
-  },
-  {
-    id: 'invite-reward',
-    titleKey: 'Invite Reward Settings',
-    build: (settings: BillingSettings) => (
-      <InviteRewardSettingsSection
-        defaultValues={{
-          required_consume_usd:
-            settings['invite_reward_setting.required_consume_usd'] ?? 0.8,
         }}
       />
     ),

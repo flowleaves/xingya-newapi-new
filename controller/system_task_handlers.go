@@ -21,33 +21,6 @@ func RegisterScheduledSystemTasks() {
 	service.RegisterSystemTaskHandler(modelUpdateHandler{})
 	service.RegisterSystemTaskHandler(midjourneyPollHandler{})
 	service.RegisterSystemTaskHandler(asyncTaskPollHandler{})
-	service.RegisterSystemTaskHandler(inviteRewardHandler{})
-}
-
-// inviteRewardHandler settles the deferred invite rewards.
-//
-// Registration no longer pays the invite reward; it records a promise. This job grants
-// eligible inviter rewards at their stored local-midnight deadline. Manual claiming can
-// settle the same row earlier, with the ledger lock providing idempotency.
-type inviteRewardHandler struct{}
-
-func (inviteRewardHandler) Type() string { return model.SystemTaskTypeInviteReward }
-
-// Enabled folds the due-reward check into enablement, so an idle system schedules no
-// task row and future eligible rewards are picked up when midnight has arrived.
-func (inviteRewardHandler) Enabled() bool { return model.HasPendingInviteReward() }
-
-func (inviteRewardHandler) Interval() time.Duration { return 5 * time.Minute }
-
-func (inviteRewardHandler) NewPayload() any { return nil }
-
-func (inviteRewardHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
-	summary, err := runInviteRewardTask(ctx)
-	if err != nil {
-		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
-		return
-	}
-	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)
 }
 
 // channelTestHandler runs the scheduled "test all channels" job. Enablement and

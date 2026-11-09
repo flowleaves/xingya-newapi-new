@@ -238,8 +238,6 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	billingErr := SettleBilling(ctx, relayInfo, quota)
 	if billingErr != nil {
 		logger.LogError(ctx, common.LogText("error settling billing: %s", billingErr.Error()))
-	} else if totalTokens > 0 && quota > 0 {
-		model.RecordSuccessfulBillableCall(relayInfo.UserId, quota, relayInfo.BillingSource)
 	}
 
 	logModel := modelName
@@ -380,8 +378,6 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	billingErr := SettleBilling(ctx, relayInfo, quota)
 	if billingErr != nil {
 		logger.LogError(ctx, common.LogText("error settling billing: %s", billingErr.Error()))
-	} else if (totalTokens > 0 || fixedPriceBilling) && quota > 0 {
-		model.RecordSuccessfulBillableCall(relayInfo.UserId, quota, relayInfo.BillingSource)
 	}
 
 	logModel := billingModelName

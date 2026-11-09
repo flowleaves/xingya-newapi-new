@@ -325,8 +325,6 @@ func handleOAuthLogin(c *gin.Context, provider oauth.Provider, oauthUser *oauth.
 			common.ApiErrorT(c, "New user registration has been disabled by administrator")
 		case *OAuthEmailAlreadyTakenError:
 			common.ApiErrorT(c, "Email address is already in use")
-		case *OAuthRegistrationDeviceLimitedError:
-			common.ApiErrorI18n(c, i18n.MsgUserRegisterDeviceLimited)
 		case *OAuthLegacyBindingNotConfirmedError:
 			common.ApiErrorT(c, "This {{provider}} account cannot be linked to an existing account automatically, please sign in or register another way and then link {{provider}} in account settings", providerParams(provider.GetName()))
 		default:
@@ -518,14 +516,14 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 	if affiliateCode != "" {
 		inviterId, _ = model.GetUserIdByAffCode(affiliateCode)
 	}
-	trialReservation := model.BeginRegistrationTrial(c.Request.Context(), c.ClientIP(), c.Request.UserAgent())
+	user.InviterId = inviterId
 
 	// Use transaction to ensure user creation and OAuth binding are atomic
 	if genericProvider, ok := provider.(*oauth.GenericOAuthProvider); ok {
 		// Custom provider: create user and binding in a transaction
 		err := model.DB.Transaction(func(tx *gorm.DB) error {
 			// Create user
-			if err := user.InsertRegistrationWithTx(tx, inviterId, trialReservation.Quota()); err != nil {
+			if err := user.InsertWithTx(tx, inviterId); err != nil {
 				return err
 			}
 
@@ -542,12 +540,7 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 			return nil
 		})
 		if err != nil {
-			trialReservation.Rollback()
 			return nil, nil, err
-		}
-		trialReservation.Commit()
-		if err := model.RecordRegistrationDevice(nil, user.Id, c.ClientIP(), c.Request.UserAgent()); err != nil {
-			common.SysLog("failed to record OAuth registration device: " + err.Error())
 		}
 
 		// Perform post-transaction tasks (logs, sidebar config, inviter rewards)
@@ -556,7 +549,7 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 		// Built-in provider: create user and update provider ID in a transaction
 		err := model.DB.Transaction(func(tx *gorm.DB) error {
 			// Create user
-			if err := user.InsertRegistrationWithTx(tx, inviterId, trialReservation.Quota()); err != nil {
+			if err := user.InsertWithTx(tx, inviterId); err != nil {
 				return err
 			}
 
@@ -576,12 +569,7 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 			return nil
 		})
 		if err != nil {
-			trialReservation.Rollback()
 			return nil, nil, err
-		}
-		trialReservation.Commit()
-		if err := model.RecordRegistrationDevice(nil, user.Id, c.ClientIP(), c.Request.UserAgent()); err != nil {
-			common.SysLog("failed to record OAuth registration device: " + err.Error())
 		}
 
 		// Perform post-transaction tasks
@@ -626,15 +614,6 @@ type OAuthLegacyBindingNotConfirmedError struct{}
 
 func (e *OAuthLegacyBindingNotConfirmedError) Error() string {
 	return "legacy binding was not confirmed"
-}
-
-// OAuthRegistrationDeviceLimitedError reports a first-time OAuth sign-in that was refused
-// because the same device had already registered an account inside the deduplication
-// window.
-type OAuthRegistrationDeviceLimitedError struct{}
-
-func (e *OAuthRegistrationDeviceLimitedError) Error() string {
-	return "registration device limit reached"
 }
 
 // handleOAuthError handles OAuth errors and returns translated message

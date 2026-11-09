@@ -640,11 +640,6 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 func finalizeTerminalTask(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
 	perfmetrics.RecordTaskResult(task, taskResult)
 	billingSettled := settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
-	if task.Status == model.TaskStatusSuccess && task.Quota > 0 && shouldRecordSuccessfulTaskCall(task) {
-		// The terminal-status CAS winner reaches this function once, so a polling
-		// retry cannot count the same completed task twice.
-		model.RecordSuccessfulBillableCall(task.UserId, task.Quota, task.PrivateData.BillingSource)
-	}
 	if task.Status == model.TaskStatusFailure && !billingSettled && task.Quota != 0 {
 		RefundTaskQuota(ctx, task, task.FailReason)
 	}

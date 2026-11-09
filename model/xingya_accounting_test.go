@@ -6,7 +6,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/glebarez/sqlite"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
@@ -76,26 +75,10 @@ func TestXingyaAccountingDatabaseMatrix(t *testing.T) {
 				name string
 				run  func(*testing.T)
 			}{
-				{"raised gate", TestRaisedInviteSpendGateCanStillBeReached},
-				{"legacy eligible recovery", TestLegacyEligibleInviteWithZeroSpendCanRecover},
-				{"scheduler batch progress", TestAutoGrantSkipsLegacyRowsBelowCurrentSpendGate},
-				{"manual grant idempotency", TestManualClaimCreditsInviterWalletAndIsIdempotent},
-				{"legacy refund revocation", TestRefundExcludesLegacyCallFromUnpaidInviteProgressOnce},
-				{"excluded calls and paid history", TestRefundDoesNotRemoveExcludedCallsOrPaidRewards},
-				{"failed refund rollback", TestFailedRefundRollsBackInviteProgress},
 				{"wallet refund idempotency", TestDoSelfRefundWalletCreditsOnce},
 				{"subscription cycle", TestDoSelfRefundSubscriptionChecksOriginalConsumptionCycle},
 				{"refund daily count", TestDoSelfRefundEnforcesDailyCountLimitInsideTransaction},
 				{"refund daily quota", TestDoSelfRefundEnforcesDailyQuotaLimit},
-				{"browser families", TestDistinctBrowserFamiliesKeepSeparateTrialFingerprints},
-				{"subnet concurrent reservations", TestConcurrentSubnetTrialsStayWithinBudget},
-				{"zero gift budget", TestZeroQuotaRegistrationsDoNotSpendSubnetBudget},
-				{"client cancellation", TestCancelledSignupContextCannotBypassPendingSubnetBudget},
-				{"populated legacy registration migration", TestMigrationAddsTheNormalizedDigestToAPopulatedLegacyTable},
-				{"registration exact addresses", TestRegistrationAuditStoresNormalizedIPAndKeepsOriginalOnRetry},
-				{"registration pagination and rc42 upgrade", TestRegistrationAuditPagesAcceptedSignupsAndPreservesLegacyRows},
-				{"duplicate registration addresses", TestGetRegistrationRiskGroupsReturnsDuplicateAccountsWithExactIP},
-				{"duplicate registration pagination", TestGetRegistrationRiskGroupsPaginatesGroupsBeforeLoadingRegistrations},
 			} {
 				t.Run(regression.name, regression.run)
 			}
@@ -104,23 +87,8 @@ func TestXingyaAccountingDatabaseMatrix(t *testing.T) {
 				require.NoError(t, err)
 				sqlDB.SetMaxOpenConns(8)
 				t.Run("concurrent daily refund cap", TestDoSelfRefundDailyLimitSurvivesConcurrentRequests)
-				t.Run("concurrent claim and refund", TestConcurrentInviteClaimAndRefundKeepAccountingConsistent)
 				sqlDB.SetMaxOpenConns(1)
 			}
-			t.Run("startup preserves existing ledger", func(t *testing.T) {
-				setupInviteRewardTestState(t, 8000)
-				inviter := createReserveTestUser(t, 100000)
-				invitee := createReserveTestUser(t, 100000)
-				reward := registerInviteRewardFixture(t, inviter.Id, invitee.Id)
-				RecordSuccessfulBillableCall(invitee.Id, 50000)
-				before := getInviteRewardFromDB(t, reward.Id)
-				require.NoError(t, InitXingyaTables(mainDB))
-				require.NoError(t, InitXingyaTables(mainDB))
-				assert.Equal(t, before, getInviteRewardFromDB(t, reward.Id))
-				duplicate := before
-				duplicate.Id = 0
-				require.Error(t, mainDB.Create(&duplicate).Error, "the unique invitee boundary must survive restarts")
-			})
 		})
 	}
 }

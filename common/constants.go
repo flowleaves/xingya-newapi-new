@@ -4,8 +4,6 @@ import (
 	"crypto/tls"
 	//"os"
 	//"strconv"
-	"net/netip"
-	"strings"
 	"sync"
 	"time"
 
@@ -77,26 +75,6 @@ var TelegramOAuthEnabled = false
 var TurnstileCheckEnabled = false
 var RegisterEnabled = true
 
-// RegistrationDeviceLimitEnabled enables the non-blocking registration trial protection.
-// A repeated exact IP + user-agent fingerprint can still register, but does not receive
-// another registration trial quota. The setting name is retained for configuration
-// compatibility with the former hard-blocking implementation.
-var RegistrationDeviceLimitEnabled = true
-
-// RegistrationDeviceLimitWhitelist holds addresses and CIDR ranges that are exempt from
-// registration trial fingerprint protection.
-var RegistrationDeviceLimitWhitelist = []string{}
-
-// RegistrationSubnetBudget limits issued trials plus live reservations per network.
-// It backstops address rotation within one allocation. Exhaustion withholds the trial
-// gift while allowing account creation; shared carrier NATs may also exhaust this budget.
-var RegistrationSubnetBudget = 3
-
-// RegistrationSubnetBudgetWindowSeconds expires the total subnet counter this many
-// seconds after its last issued trial. This is an inactivity expiry, not a per-claim
-// sliding window. It is deliberately longer than the fingerprint deduplication window.
-var RegistrationSubnetBudgetWindowSeconds int64 = 30 * 24 * 60 * 60
-
 var EmailDomainRestrictionEnabled = false // 是否启用邮箱域名限制
 var EmailAliasRestrictionEnabled = false  // 是否启用邮箱别名限制
 var EmailDomainWhitelist = []string{
@@ -113,52 +91,6 @@ var EmailDomainWhitelist = []string{
 var EmailLoginAuthServerList = []string{
 	"smtp.sendcloud.net",
 	"smtp.azurecomm.net",
-}
-
-// IsRegistrationDeviceWhitelisted reports whether a client address is exempt from the
-// registration device limit.
-//
-// Entries are individual addresses or CIDR ranges, compared after parsing so that an
-// IPv4-mapped address or a differently formatted range still matches its equivalent. An
-// unparseable entry is skipped rather than treated as a match, so a typo in the whitelist
-// cannot silently exempt everyone.
-func IsRegistrationDeviceWhitelisted(clientIp string) bool {
-	addr, ok := parseRegistrationAddr(clientIp)
-	if !ok {
-		return false
-	}
-	for _, entry := range RegistrationDeviceLimitWhitelist {
-		trimmed := strings.TrimSpace(entry)
-		if trimmed == "" {
-			continue
-		}
-		if prefix, err := netip.ParsePrefix(trimmed); err == nil {
-			if prefix.Contains(addr) {
-				return true
-			}
-			continue
-		}
-		if single, err := netip.ParseAddr(trimmed); err == nil && single.Unmap() == addr {
-			return true
-		}
-	}
-	return false
-}
-
-// parseRegistrationAddr accepts a bare address or an address with a port.
-func parseRegistrationAddr(rawIp string) (netip.Addr, bool) {
-	trimmed := strings.TrimSpace(rawIp)
-	if trimmed == "" {
-		return netip.Addr{}, false
-	}
-	if parsed, err := netip.ParseAddrPort(trimmed); err == nil {
-		return parsed.Addr().Unmap(), true
-	}
-	parsed, err := netip.ParseAddr(trimmed)
-	if err != nil {
-		return netip.Addr{}, false
-	}
-	return parsed.Unmap(), true
 }
 
 var DebugEnabled bool

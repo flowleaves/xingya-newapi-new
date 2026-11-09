@@ -195,8 +195,6 @@ export type AuthSettings = {
   TurnstileCheckEnabled: boolean
   TurnstileSiteKey: string
   TurnstileSecretKey: string
-  RegistrationDeviceLimitEnabled: boolean
-  RegistrationDeviceLimitWhitelist: string
   'passkey.enabled': boolean
   'passkey.rp_display_name': string
   'passkey.rp_id': string
@@ -374,7 +372,6 @@ export type BillingSettings = {
   'self_refund_setting.daily_max_count': number
   'self_refund_setting.daily_max_quota': number
   'self_refund_setting.min_refund_quota': number
-  'invite_reward_setting.required_consume_usd': number
 }
 
 export type OperationsSettings = {

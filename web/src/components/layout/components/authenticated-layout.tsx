@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { AnnouncementPopup } from '@/components/announcement-popup'
 import { CommandMenu } from '@/components/command-menu'
 import { AnimatedOutlet } from '@/components/page-transition'
 import { SkipToMain } from '@/components/skip-to-main'
@@ -42,7 +41,6 @@ export function AuthenticatedLayout(props: AuthenticatedLayoutProps) {
         <SidebarProvider defaultOpen={defaultOpen} className='flex-col'>
           <SkipToMain />
           <AppHeader />
-          <AnnouncementPopup />
           <div className='flex min-h-0 w-full flex-1'>
             <AppSidebar />
             <SidebarInset

@@ -63,8 +63,6 @@ const defaultAuthSettings: AuthSettings = {
   TurnstileCheckEnabled: false,
   TurnstileSiteKey: '',
   TurnstileSecretKey: '',
-  RegistrationDeviceLimitEnabled: false,
-  RegistrationDeviceLimitWhitelist: '',
   'passkey.enabled': false,
   'passkey.rp_display_name': '',
   'passkey.rp_id': '',

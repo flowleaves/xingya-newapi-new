@@ -104,9 +104,6 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 	const mixed = `len <= 32000 ? tier("short", fixed(0.01)) : tier("long", p * 2)`
 	const flat = `tier("request", fixed(0.01))`
 	const startingQuota = 2_000_000
-	inviter := &model.User{Username: "fixed-inviter", AffCode: "fixed-inviter", Quota: 100000, Status: common.UserStatusEnabled}
-	require.NoError(t, db.Create(inviter).Error)
-	t.Cleanup(func() { require.NoError(t, db.Unscoped().Delete(inviter).Error) })
 	const imageExpression = `tier("standard", p * 5 + cr * 1.25 + img * 8 + img_cr * 2 + c * 30)`
 	imageUsage := &dto.Usage{PromptTokens: 1000, CompletionTokens: 100, TotalTokens: 1100,
 		PromptTokensDetails: dto.InputTokenDetails{CachedTokens: 300, ImageTokens: 600, CachedTokensDetails: &dto.CachedTokenDetails{ImageTokens: common.GetPointer(200)}}}
@@ -165,14 +162,11 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 			}
 			user := model.User{Username: fmt.Sprintf("fixed_billing_%d", index), Quota: quota, Status: common.UserStatusEnabled}
 			require.NoError(t, db.Create(&user).Error)
-			reward := &model.XingyaInviteRewardPending{InviteeId: user.Id, InviterId: inviter.Id, State: model.InviteRewardStatePending, CreatedAt: common.GetTimestamp()}
-			require.NoError(t, db.Create(reward).Error)
 			token := model.Token{UserId: user.Id, Key: fmt.Sprintf("fixed-billing-test-%d", index), Name: "fixed-billing", RemainQuota: startingQuota, Status: common.TokenStatusEnabled}
 			require.NoError(t, db.Create(&token).Error)
 			channel := model.Channel{Name: "fixed-billing", Key: "unused", Status: common.ChannelStatusEnabled}
 			require.NoError(t, db.Create(&channel).Error)
 			t.Cleanup(func() {
-				require.NoError(t, db.Delete(reward).Error)
 				require.NoError(t, logDB.Where("user_id = ?", user.Id).Delete(&model.Log{}).Error)
 				require.NoError(t, db.Unscoped().Delete(&token).Error)
 				require.NoError(t, db.Unscoped().Delete(&user).Error)
@@ -330,28 +324,6 @@ func runFixedPriceAccountingCases(t *testing.T, db, logDB *gorm.DB) {
 			assert.Equal(t, tc.want, token.UsedQuota)
 			if !tc.refund && !tc.insufficient {
 				assert.Equal(t, 1, user.RequestCount)
-			}
-			require.NoError(t, db.First(reward, reward.Id).Error)
-			if tc.qualifies {
-				assert.Equal(t, 1, reward.QualifyingCalls)
-				assert.Equal(t, tc.want, reward.QualifyingQuota)
-			} else {
-				assert.Zero(t, reward.QualifyingCalls)
-				assert.Zero(t, reward.QualifyingQuota)
-			}
-			if tc.want > 0 && !tc.qualifies && !tc.refund && !tc.insufficient {
-				// A failed call excluded while refunds are disabled must stay excluded
-				// when the operator later enables refunds; it cannot remove valid progress.
-				require.True(t, model.RecordSuccessfulBillableCall(user.Id, 50000))
-				*refundSetting = operation_setting.SelfRefundSetting{Enabled: true, Ratio: 0.5, WindowHours: 48}
-				var log model.Log
-				require.NoError(t, logDB.Where("user_id = ? AND type = ?", user.Id, model.LogTypeConsume).First(&log).Error)
-				_, err := DoSelfRefund(user.Id, log.Id, log.RequestId)
-				require.NoError(t, err)
-				require.NoError(t, db.First(reward, reward.Id).Error)
-				assert.Equal(t, 1, reward.QualifyingCalls)
-				assert.Equal(t, 50000, reward.QualifyingQuota)
-				*refundSetting = operation_setting.SelfRefundSetting{Enabled: false, OnlyPerRequest: true}
 			}
 		})
 	}

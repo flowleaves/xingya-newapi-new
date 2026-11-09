@@ -119,8 +119,6 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.POST("/passkey/verify/finish", middleware.UserCriticalRateLimit("security-verification"), middleware.DisableCache(), controller.PasskeyVerifyFinish)
 				selfRoute.DELETE("/passkey", middleware.DisableCache(), controller.PasskeyDelete)
 				selfRoute.GET("/aff", controller.GetAffCode)
-				selfRoute.GET("/invite_rewards/self", controller.ListInviteRewardsSelf)
-				selfRoute.POST("/invite_rewards/:id/claim", middleware.UserCriticalRateLimit("invite-reward"), controller.ClaimInviteRewardSelf)
 				selfRoute.GET("/topup/info", controller.GetTopUpInfo)
 				selfRoute.GET("/topup/self", controller.GetUserTopUps)
 				selfRoute.POST("/topup", middleware.CriticalRateLimit(), controller.TopUp)
@@ -164,8 +162,6 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.GET("/topup", controller.GetAllTopUps)
 				adminRoute.POST("/topup/complete", controller.AdminCompleteTopUp)
 				adminRoute.GET("/search", controller.SearchUsers)
-				adminRoute.GET("/registration_devices/risk", controller.AdminListRegistrationRisk)
-				adminRoute.GET("/registration_devices", controller.AdminListRegistrationDevices)
 				adminRoute.GET("/:id/oauth/bindings", controller.GetUserOAuthBindingsByAdmin)
 				adminRoute.DELETE("/:id/oauth/bindings/:provider_id", controller.UnbindCustomOAuthByAdmin)
 				adminRoute.DELETE("/:id/bindings/:binding_type", controller.AdminClearUserBinding)
@@ -179,9 +175,6 @@ func SetApiRouter(router *gin.Engine) {
 				// Admin 2FA routes
 				adminRoute.GET("/2fa/stats", controller.Admin2FAStats)
 				adminRoute.DELETE("/:id/2fa", controller.AdminDisable2FA)
-				// Device signals recorded for a registration, for diagnosing the
-				// same-device registration limit.
-				adminRoute.GET("/:id/registration", controller.AdminGetRegistrationDevice)
 			}
 		}
 
@@ -214,14 +207,6 @@ func SetApiRouter(router *gin.Engine) {
 			subscriptionAdminRoute.POST("/users/:id/subscriptions/reset", controller.AdminResetUserSubscriptionsByPlan)
 			subscriptionAdminRoute.POST("/user_subscriptions/:id/invalidate", controller.AdminInvalidateUserSubscription)
 			subscriptionAdminRoute.DELETE("/user_subscriptions/:id", controller.AdminDeleteUserSubscription)
-		}
-
-		// Deferred invite rewards are a promise the platform owes, so support needs to
-		// see which ones are still waiting on an invitee and which were closed unpaid.
-		inviteRewardAdminRoute := apiRouter.Group("/user/invite_rewards")
-		inviteRewardAdminRoute.Use(middleware.AdminAuth())
-		{
-			inviteRewardAdminRoute.GET("/", controller.AdminListInviteRewards)
 		}
 
 		// Subscription payment callbacks (no auth)

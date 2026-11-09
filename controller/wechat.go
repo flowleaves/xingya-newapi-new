@@ -87,19 +87,9 @@ func WeChatAuth(c *gin.Context) {
 			user.Role = common.RoleCommonUser
 			user.Status = common.UserStatusEnabled
 
-			trialReservation := model.BeginRegistrationTrial(c.Request.Context(), c.ClientIP(), c.Request.UserAgent())
-			if err := user.InsertRegistration(0, trialReservation.Quota()); err != nil {
-				trialReservation.Rollback()
-				c.JSON(http.StatusOK, gin.H{
-					"success": false,
-					"message": err.Error(),
-				})
+			if err := user.Insert(0); err != nil {
+				common.ApiError(c, err)
 				return
-			}
-			trialReservation.Commit()
-			// A failure to record the device must not reject an account that was created.
-			if err := model.RecordRegistrationDevice(nil, user.Id, c.ClientIP(), c.Request.UserAgent()); err != nil {
-				common.SysLog("failed to record registration device: " + err.Error())
 			}
 		} else {
 			common.ApiErrorT(c, "New user registration has been disabled by administrator")

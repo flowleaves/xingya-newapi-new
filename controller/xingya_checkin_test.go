@@ -294,8 +294,6 @@ func TestXingyaCheckinAPIPostgres(t *testing.T) {
 		var token model.Token
 		require.NoError(t, model.DB.Where("user_id = ? AND quota_source = ?", user.Id, model.CheckinQuotaSource).Take(&token).Error)
 		require.NoError(t, model.DB.Model(&token).Update("unlimited_quota", true).Error)
-		reward := model.XingyaInviteRewardPending{InviteeId: user.Id, InviterId: user.Id, State: model.InviteRewardStatePending}
-		require.NoError(t, model.DB.Create(&reward).Error)
 		router := gin.New()
 		router.Use(func(c *gin.Context) { c.Set(common.RequestIdKey, common.NewRequestId()); c.Next() }, middleware.BodyStorageCleanup(), middleware.TokenAuth(), middleware.Distribute())
 		for _, path := range []string{"/v1/chat/completions", "/v1/responses", "/v1/messages", "/v1/embeddings"} {
@@ -398,7 +396,6 @@ func TestXingyaCheckinAPIPostgres(t *testing.T) {
 				assert.Equal(t, "checkin", gjson.Get(log.Other, "billing_source").String())
 				assert.Equal(t, int64(charge), gjson.Get(log.Other, "checkin_consumed").Int())
 				assert.Equal(t, int64(after.Available), gjson.Get(log.Other, "checkin_balance_after").Int())
-				assert.False(t, gjson.Get(log.Other, "invite_qualifying").Bool())
 			}
 		}
 		assert.Equal(t, int32(9), attempts.Load())
@@ -426,7 +423,6 @@ func TestXingyaCheckinAPIPostgres(t *testing.T) {
 				assert.Zero(t, after.Reserved)
 				var log model.Log
 				require.NoError(t, model.LOG_DB.Where("user_id = ? AND type = ?", user.Id, model.LogTypeConsume).Order("id DESC").Take(&log).Error)
-				assert.False(t, gjson.Get(log.Other, "invite_qualifying").Bool())
 				assert.Equal(t, "checkin", gjson.Get(log.Other, "billing_source").String())
 			})
 		}
@@ -447,10 +443,6 @@ func TestXingyaCheckinAPIPostgres(t *testing.T) {
 			wallet, err := model.GetXingyaCheckinWallet(user.Id)
 			return err == nil && wallet.Reserved == 0 && wallet.Available == beforeFailure.Available && wallet.Consumed == beforeFailure.Consumed
 		}, 3*time.Second, 10*time.Millisecond)
-		var progress model.XingyaInviteRewardPending
-		require.NoError(t, model.DB.First(&progress, reward.Id).Error)
-		assert.Zero(t, progress.QualifyingCalls)
-		assert.Zero(t, progress.QualifyingQuota)
 		var saved model.User
 		require.NoError(t, model.DB.First(&saved, user.Id).Error)
 		assert.Equal(t, 90000, saved.Quota)

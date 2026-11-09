@@ -124,7 +124,6 @@ const defaultBillingSettings: BillingSettings = {
   'self_refund_setting.daily_max_count': 3,
   'self_refund_setting.daily_max_quota': 0,
   'self_refund_setting.min_refund_quota': 0,
-  'invite_reward_setting.required_consume_usd': 0.8,
 }
 
 export function BillingSettings() {

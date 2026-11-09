@@ -264,9 +264,6 @@ func DoSelfRefundWallet(userId int, logId int, baseQuota int, refundAmount int, 
 	}
 
 	if err := DB.Transaction(func(tx *gorm.DB) error {
-		if err := revokeRefundedInviteCallTx(tx, log, baseQuota); err != nil {
-			return err
-		}
 		// 1. 串行化同一用户的并发补回，使限额校验与幂等插入处于同一临界区
 		if err := lockUserForRefundTx(tx, userId); err != nil {
 			return err
@@ -360,9 +357,6 @@ func DoSelfRefundSubscription(userId int, logId int, subscriptionId int, baseQuo
 	}
 
 	if err := DB.Transaction(func(tx *gorm.DB) error {
-		if err := revokeRefundedInviteCallTx(tx, log, baseQuota); err != nil {
-			return err
-		}
 		// 1. 先锁用户行（与钱包路径同一把锁、同一顺序，避免互相死锁）
 		if err := lockUserForRefundTx(tx, userId); err != nil {
 			return err

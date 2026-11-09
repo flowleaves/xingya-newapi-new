@@ -717,19 +717,23 @@ func ensureEmailAvailableWithTx(tx *gorm.DB, email string, excludeUserID int) er
 }
 
 func (user *User) Insert(inviterId int) error {
-	return user.InsertWithQuota(inviterId, common.QuotaForNewUser)
-}
-
-// InsertRegistration creates a self-service registration with the quota decided by the
-// registration fingerprint policy. A repeated fingerprint receives zero trial quota but
-// still gets a normal account.
-func (user *User) InsertRegistration(inviterId int, registrationQuota int) error {
-	return user.InsertWithQuota(inviterId, registrationQuota)
-}
-
-func (user *User) InsertWithQuota(inviterId int, quota int) error {
 	if err := DB.Transaction(func(tx *gorm.DB) error {
-		return user.InsertWithQuotaTx(tx, inviterId, quota)
+		return withNormalizedEmailLock(tx, user.Email, func(tx *gorm.DB) error {
+			if err := user.prepareForInsert(tx); err != nil {
+				return err
+			}
+			user.Quota = common.QuotaForNewUser
+			user.AffCode = common.GetRandomString(4)
+
+			// Initialize the default user setting. Sidebar modules are assigned
+			// after the user row exists.
+			if user.Setting == "" {
+				defaultSetting := dto.UserSetting{}
+				user.SetSetting(defaultSetting)
+			}
+
+			return tx.Create(user).Error
+		})
 	}); err != nil {
 		return err
 	}
@@ -754,25 +758,19 @@ func (user *User) finishInsert(inviterId int) {
 		}
 	}
 
-	if user.Quota > 0 {
-		RecordLog(user.Id, LogTypeSystem, common.NewMessage("New user sign-up bonus {{quota}}", map[string]any{"quota": logger.FormatQuota(user.Quota)}))
+	if common.QuotaForNewUser > 0 {
+		RecordLog(user.Id, LogTypeSystem, common.NewMessage("New user sign-up bonus {{quota}}", map[string]any{"quota": logger.FormatQuota(common.QuotaForNewUser)}))
 	}
-	grantDeferredInviteReward(user.Id, inviterId)
-}
-
-// grantDeferredInviteReward records the invited registration that will earn the invite
-// reward once the invitee qualifies.
-//
-// The reward used to be paid here, at registration, to both sides at once. It is now
-// only promised: the invitee must complete the required number of successful calls.
-// A failure to record the promise must not reject an account that has already
-// been created, so it is logged rather than returned.
-func grantDeferredInviteReward(inviteeId int, inviterId int) {
-	if inviterId == 0 || !operation_setting.IsPaymentComplianceConfirmed() {
-		return
-	}
-	if err := CreateInviteRewardPending(inviteeId, inviterId); err != nil {
-		common.SysError(fmt.Sprintf("failed to record deferred invite reward for user %d: %v", inviteeId, err))
+	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
+		if common.QuotaForInvitee > 0 {
+			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
+			RecordLog(user.Id, LogTypeSystem, common.NewMessage("Invitation code bonus {{quota}}", map[string]any{"quota": logger.FormatQuota(common.QuotaForInvitee)}))
+		}
+		if common.QuotaForInviter > 0 {
+			//_ = IncreaseUserQuota(inviterId, common.QuotaForInviter)
+			RecordLog(inviterId, LogTypeSystem, common.NewMessage("Bonus for inviting a user {{quota}}", map[string]any{"quota": logger.FormatQuota(common.QuotaForInviter)}))
+			_ = inviteUser(inviterId)
+		}
 	}
 }
 
@@ -785,13 +783,6 @@ func (user *User) FinishInsert(inviterId int) {
 // Post-creation tasks (sidebar config, logs, inviter rewards) are handled after the transaction commits.
 func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 	return user.InsertWithQuotaTx(tx, inviterId, common.QuotaForNewUser)
-}
-
-// InsertRegistrationWithTx is the transactional registration variant used by OAuth
-// flows. The device audit row is written after commit so bookkeeping failure cannot
-// reject an account that has already been created.
-func (user *User) InsertRegistrationWithTx(tx *gorm.DB, inviterId int, registrationQuota int) error {
-	return user.InsertWithQuotaTx(tx, inviterId, registrationQuota)
 }
 
 func (user *User) InsertWithQuotaTx(tx *gorm.DB, inviterId int, quota int) error {
@@ -828,10 +819,19 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 		}
 	}
 
-	if user.Quota > 0 {
-		RecordLog(user.Id, LogTypeSystem, common.NewMessage("New user sign-up bonus {{quota}}", map[string]any{"quota": logger.FormatQuota(user.Quota)}))
+	if common.QuotaForNewUser > 0 {
+		RecordLog(user.Id, LogTypeSystem, common.NewMessage("New user sign-up bonus {{quota}}", map[string]any{"quota": logger.FormatQuota(common.QuotaForNewUser)}))
 	}
-	grantDeferredInviteReward(user.Id, inviterId)
+	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
+		if common.QuotaForInvitee > 0 {
+			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
+			RecordLog(user.Id, LogTypeSystem, common.NewMessage("Invitation code bonus {{quota}}", map[string]any{"quota": logger.FormatQuota(common.QuotaForInvitee)}))
+		}
+		if common.QuotaForInviter > 0 {
+			RecordLog(inviterId, LogTypeSystem, common.NewMessage("Bonus for inviting a user {{quota}}", map[string]any{"quota": logger.FormatQuota(common.QuotaForInviter)}))
+			_ = inviteUser(inviterId)
+		}
+	}
 }
 
 func (user *User) Update(updatePassword bool) error {
@@ -1028,9 +1028,6 @@ func (user *User) delete(identity *AuthSessionIdentity) (int64, error) {
 		if err != nil {
 			return err
 		}
-		if err := CancelInviteRewardsForDeletedInviter(tx, user.Id); err != nil {
-			return err
-		}
 		return tx.Delete(user).Error
 	}); err != nil {
 		return 0, err
@@ -1067,9 +1064,6 @@ func (user *User) HardDelete() (int64, error) {
 			}
 		}
 		if err := deleteUserAuthenticationData(tx, user.Id); err != nil {
-			return err
-		}
-		if err := CancelInviteRewardsForDeletedInviter(tx, user.Id); err != nil {
 			return err
 		}
 		return tx.Unscoped().Delete(user).Error
