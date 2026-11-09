@@ -22,6 +22,7 @@ import {
   CheckinSettingsSection,
   type CheckinTierValue,
 } from '../general/checkin-settings-section'
+import { InviteRebateSettingsSection } from '../general/invite-rebate-settings-section'
 import { PricingSection } from '../general/pricing-section'
 import { QuotaSettingsSection } from '../general/quota-settings-section'
 import { SelfRefundSettingsSection } from '../general/self-refund-settings-section'
@@ -273,6 +274,26 @@ const BILLING_SECTIONS = [
           daily_max_quota: settings['self_refund_setting.daily_max_quota'] ?? 0,
           min_refund_quota:
             settings['self_refund_setting.min_refund_quota'] ?? 0,
+        }}
+      />
+    ),
+  },
+  {
+    id: 'invite-rebate',
+    titleKey: 'Invite Rebate Settings',
+    build: (settings: BillingSettings) => (
+      <InviteRebateSettingsSection
+        defaultValues={{
+          enabled: settings['invite_rebate_setting.enabled'] ?? true,
+          ratio_percent:
+            settings['invite_rebate_setting.ratio_percent'] ?? 5,
+          window_days: settings['invite_rebate_setting.window_days'] ?? 15,
+          max_rebate_per_invitee:
+            settings['invite_rebate_setting.max_rebate_per_invitee'] ?? 5000,
+          include_topup:
+            settings['invite_rebate_setting.include_topup'] ?? true,
+          include_redemption:
+            settings['invite_rebate_setting.include_redemption'] ?? true,
         }}
       />
     ),

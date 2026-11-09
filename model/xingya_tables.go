@@ -28,6 +28,7 @@ func InitXingyaTables(db *gorm.DB) error {
 	}
 	for _, table := range []any{
 		&LogRefund{},
+		&XingyaInviteRebate{},
 		&XingyaCheckinWallet{},
 		&XingyaCheckinGrant{},
 		&XingyaCheckinSpend{},

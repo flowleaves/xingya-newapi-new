@@ -1,5 +1,16 @@
 # CHANGELOG — 星芽 NewAPI
 
+## xingya-rc50 · 2026-11-10 邀请返利（5% / 15 天 / 单用户 5000 芽点）
+
+- 新增邀请返利：受邀用户注册后 15 天内完成钱包充值或兑换码兑换，按实际到账额度 5% 返利给邀请人。
+- 返利进入原生 `aff_quota` / `aff_history`，继续沿用现有「邀请返利余额转入钱包」流程；不新增独立余额。
+- 单个受邀用户累计返利上限 5000 芽点（50 额度）；达到上限后不再增加，并在明细中记录 `capped`。
+- 新增 `xingya_invite_rebates` 明细表，唯一约束 `(source_type, source_id)` 保证充值回调/兑换重试幂等。
+- 充值侧统一挂在 `creditTopUpQuota`：覆盖 Epay / Stripe / Creem / Waffo / Waffo Pancake / 管理员补单 / 兑换码；返利用 savepoint 隔离，失败不影响用户充值成功。
+- 新增用户 API `GET /api/user/invite_rebates`、邀请明细页 `/invite-rebates`、侧边栏入口与后台邀请返利设置。
+- 邀请链接使用 `https://xingya.space/sign-up?aff=...`；明细页展示累计返利、可转入、已邀请、15 天窗口、单用户上限与返利记录。
+- 数据库：新增表采用 `InitXingyaTables` 增量创建，不改 `users` 表、不重建历史数据；PostgreSQL 迁移与账务矩阵待部署前复核。
+
 ## xingya-rc49 · 2026-11-09 合并上游 rc49 + 功能精简
 
 - 合并 QuantumNous/new-api `v1.0.0-rc.49`（含 `origin/main` 额外 2 个提交）；上游本区间无新增表/持久化列，合并本身不触发数据库结构变更。

@@ -124,6 +124,12 @@ const defaultBillingSettings: BillingSettings = {
   'self_refund_setting.daily_max_count': 3,
   'self_refund_setting.daily_max_quota': 0,
   'self_refund_setting.min_refund_quota': 0,
+  'invite_rebate_setting.enabled': true,
+  'invite_rebate_setting.ratio_percent': 5,
+  'invite_rebate_setting.window_days': 15,
+  'invite_rebate_setting.max_rebate_per_invitee': 5000,
+  'invite_rebate_setting.include_topup': true,
+  'invite_rebate_setting.include_redemption': true,
 }
 
 export function BillingSettings() {

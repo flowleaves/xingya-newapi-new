@@ -161,10 +161,11 @@ func Redeem(key string, userId int) (quota int, err error) {
 		// Compare-and-swap on status: only the transaction that flips
 		// enabled -> used may credit quota, so a concurrent redeem of the
 		// same code loses here even without a row lock (e.g. on SQLite).
+		now := common.GetTimestamp()
 		result := tx.Model(&Redemption{}).
 			Where("id = ? AND status = ?", redemption.Id, common.RedemptionCodeStatusEnabled).
 			Updates(map[string]any{
-				"redeemed_time": common.GetTimestamp(),
+				"redeemed_time": now,
 				"status":        common.RedemptionCodeStatusUsed,
 				"used_user_id":  userId,
 			})
@@ -174,7 +175,7 @@ func Redeem(key string, userId int) (quota int, err error) {
 		if result.RowsAffected == 0 {
 			return errors.New("redemption code already used")
 		}
-		return creditTopUpQuota(tx, userId, redemption.Quota, nil)
+		return creditTopUpQuota(tx, userId, redemption.Quota, InviteRebateSource{Type: InviteRebateSourceRedemption, Id: redemption.Id, OccurredAt: now}, nil)
 	})
 	if err != nil {
 		common.SysError(common.LogText("redemption failed: %s", err.Error()))

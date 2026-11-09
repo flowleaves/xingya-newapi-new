@@ -36,6 +36,7 @@ import {
   ServerCog,
   Settings,
   ShieldCheck,
+  Sprout,
   Ticket,
   User,
   Users,
@@ -126,6 +127,11 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             title: t('Wallet'),
             url: '/wallet',
             icon: Wallet,
+          },
+          {
+            title: t('Invite Rebates'),
+            url: '/invite-rebates',
+            icon: Sprout,
           },
           {
             title: t('Recharge Center'),

@@ -372,6 +372,12 @@ export type BillingSettings = {
   'self_refund_setting.daily_max_count': number
   'self_refund_setting.daily_max_quota': number
   'self_refund_setting.min_refund_quota': number
+  'invite_rebate_setting.enabled': boolean
+  'invite_rebate_setting.ratio_percent': number
+  'invite_rebate_setting.window_days': number
+  'invite_rebate_setting.max_rebate_per_invitee': number
+  'invite_rebate_setting.include_topup': boolean
+  'invite_rebate_setting.include_redemption': boolean
 }
 
 export type OperationsSettings = {

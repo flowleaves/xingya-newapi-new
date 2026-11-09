@@ -28,6 +28,7 @@ import { Route as errors500RouteImport } from './routes/(errors)/500'
 import { Route as errors503RouteImport } from './routes/(errors)/503'
 import { Route as AuthenticatedChat2linkRouteImport } from './routes/_authenticated/chat2link'
 import { Route as AuthenticatedCheckinRouteImport } from './routes/_authenticated/checkin'
+import { Route as AuthenticatedInviteRebatesRouteImport } from './routes/_authenticated/invite-rebates'
 import { Route as AuthenticatedRechargeRouteImport } from './routes/_authenticated/recharge'
 import { Route as AuthenticatedSelfRefundRouteImport } from './routes/_authenticated/self-refund'
 import { Route as AuthenticatedSystemSettingsRouteRouteImport } from './routes/_authenticated/system-settings/route'
@@ -169,6 +170,12 @@ const AuthenticatedCheckinRoute = AuthenticatedCheckinRouteImport.update({
   path: '/checkin',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedInviteRebatesRoute =
+  AuthenticatedInviteRebatesRouteImport.update({
+    id: '/invite-rebates',
+    path: '/invite-rebates',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedRechargeRoute = AuthenticatedRechargeRouteImport.update({
   id: '/recharge',
   path: '/recharge',
@@ -459,6 +466,7 @@ export interface FileRoutesByFullPath {
   '/503': typeof errors503Route
   '/chat2link': typeof AuthenticatedChat2linkRoute
   '/checkin': typeof AuthenticatedCheckinRoute
+  '/invite-rebates': typeof AuthenticatedInviteRebatesRoute
   '/recharge': typeof AuthenticatedRechargeRoute
   '/self-refund': typeof AuthenticatedSelfRefundRoute
   '/oauth/$provider': typeof OauthProviderRoute
@@ -524,6 +532,7 @@ export interface FileRoutesByTo {
   '/503': typeof errors503Route
   '/chat2link': typeof AuthenticatedChat2linkRoute
   '/checkin': typeof AuthenticatedCheckinRoute
+  '/invite-rebates': typeof AuthenticatedInviteRebatesRoute
   '/recharge': typeof AuthenticatedRechargeRoute
   '/self-refund': typeof AuthenticatedSelfRefundRoute
   '/oauth/$provider': typeof OauthProviderRoute
@@ -593,6 +602,7 @@ export interface FileRoutesById {
   '/(errors)/503': typeof errors503Route
   '/_authenticated/chat2link': typeof AuthenticatedChat2linkRoute
   '/_authenticated/checkin': typeof AuthenticatedCheckinRoute
+  '/_authenticated/invite-rebates': typeof AuthenticatedInviteRebatesRoute
   '/_authenticated/recharge': typeof AuthenticatedRechargeRoute
   '/_authenticated/self-refund': typeof AuthenticatedSelfRefundRoute
   '/oauth/$provider': typeof OauthProviderRoute
@@ -661,6 +671,7 @@ export interface FileRouteTypes {
     | '/503'
     | '/chat2link'
     | '/checkin'
+    | '/invite-rebates'
     | '/recharge'
     | '/self-refund'
     | '/oauth/$provider'
@@ -726,6 +737,7 @@ export interface FileRouteTypes {
     | '/503'
     | '/chat2link'
     | '/checkin'
+    | '/invite-rebates'
     | '/recharge'
     | '/self-refund'
     | '/oauth/$provider'
@@ -794,6 +806,7 @@ export interface FileRouteTypes {
     | '/(errors)/503'
     | '/_authenticated/chat2link'
     | '/_authenticated/checkin'
+    | '/_authenticated/invite-rebates'
     | '/_authenticated/recharge'
     | '/_authenticated/self-refund'
     | '/oauth/$provider'
@@ -994,6 +1007,13 @@ declare module '@tanstack/react-router' {
       path: '/checkin'
       fullPath: '/checkin'
       preLoaderRoute: typeof AuthenticatedCheckinRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/invite-rebates': {
+      id: '/_authenticated/invite-rebates'
+      path: '/invite-rebates'
+      fullPath: '/invite-rebates'
+      preLoaderRoute: typeof AuthenticatedInviteRebatesRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/recharge': {
@@ -1421,6 +1441,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedSystemSettingsRouteRoute: typeof AuthenticatedSystemSettingsRouteRouteWithChildren
   AuthenticatedChat2linkRoute: typeof AuthenticatedChat2linkRoute
   AuthenticatedCheckinRoute: typeof AuthenticatedCheckinRoute
+  AuthenticatedInviteRebatesRoute: typeof AuthenticatedInviteRebatesRoute
   AuthenticatedRechargeRoute: typeof AuthenticatedRechargeRoute
   AuthenticatedSelfRefundRoute: typeof AuthenticatedSelfRefundRoute
   AuthenticatedChatChatIdRoute: typeof AuthenticatedChatChatIdRoute
@@ -1450,6 +1471,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
     AuthenticatedSystemSettingsRouteRouteWithChildren,
   AuthenticatedChat2linkRoute: AuthenticatedChat2linkRoute,
   AuthenticatedCheckinRoute: AuthenticatedCheckinRoute,
+  AuthenticatedInviteRebatesRoute: AuthenticatedInviteRebatesRoute,
   AuthenticatedRechargeRoute: AuthenticatedRechargeRoute,
   AuthenticatedSelfRefundRoute: AuthenticatedSelfRefundRoute,
   AuthenticatedChatChatIdRoute: AuthenticatedChatChatIdRoute,
