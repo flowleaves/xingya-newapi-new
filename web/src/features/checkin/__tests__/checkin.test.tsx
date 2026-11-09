@@ -361,7 +361,7 @@ test('fixed reward validation rejects enabled zero rewards and invalid amounts',
   ).toBe(false)
 })
 
-test('the shared card shows upcoming expiry and opens reconciled totals with the opening deadline', async () => {
+test('the shared card shows upcoming expiry without a credit-details dialog', async () => {
   const data = fixture()
   const expires = Date.parse('2026-11-01T02:03:04Z') / 1000
   data.wallet = {
@@ -385,25 +385,10 @@ test('the shared card shows upcoming expiry and opens reconciled totals with the
   expect(
     screen.getByText(/Next expiry \(Beijing time\).*10:03:04/)
   ).toBeVisible()
+  expect(
+    screen.queryByRole('button', { name: 'Credit details' })
+  ).not.toBeInTheDocument()
   expect(screen.queryByText('Expired check-in credit')).not.toBeInTheDocument()
-  const user = userEvent.setup()
-  await user.click(screen.getByRole('button', { name: 'Credit details' }))
-  const dialog = await screen.findByRole('dialog', {
-    name: 'Check-in credit details',
-  })
-  expect(
-    within(dialog).getByText('Total check-in credit awarded')
-  ).toBeVisible()
-  expect(within(dialog).getAllByText('Expired check-in credit')).toHaveLength(2)
-  expect(within(dialog).getByText('Pre-upgrade check-in credit')).toBeVisible()
-  expect(
-    within(dialog).getByText(/Expires at \(Beijing time\).*10:03:04/)
-  ).toBeVisible()
-  await user.keyboard('{Escape}')
-  await waitFor(() =>
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-  )
-  expect(screen.getByRole('button', { name: 'Credit details' })).toHaveFocus()
 })
 
 test('a wallet without available expiring lots does not display a false expiry reminder', async () => {
@@ -445,8 +430,9 @@ test('negative check-in balances and an extra daily round are visible', async ()
     )
   ).toBeVisible()
   expect(screen.getByRole('button', { name: 'Check in now' })).toBeEnabled()
-  await userEvent.click(screen.getByRole('button', { name: 'Credit details' }))
-  expect(await screen.findByText('Check-in overdraft')).toBeVisible()
+  expect(
+    screen.queryByRole('button', { name: 'Credit details' })
+  ).not.toBeInTheDocument()
 })
 
 test('refresh confirmation retains its displayed round after a background refetch', async () => {

@@ -7751,6 +7751,9 @@
     "Include redemption codes": "计入兑换码",
     "Count quota redeemed with a code": "统计通过兑换码到账的额度",
     "How to use: create a check-in key, then call models in the check-in group. Check-in credit is used first.": "使用方式：创建签到专用 Key，在签到分组内调用模型，优先扣除签到额度。",
-    "Check-ins follow Beijing time. Check-in credit only works with check-in keys.": "签到以北京时间为准；签到额度仅适用于签到专用 Key。"
+    "Check-ins follow Beijing time. Check-in credit only works with check-in keys.": "签到以北京时间为准；签到额度仅适用于签到专用 Key。",
+    "Notes": "说明",
+    "Within {{days}} days of a friend’s sign-up, wallet top-ups and redemption codes earn {{ratio}}% of the credited amount, up to {{cap}} sprouts per friend.": "好友注册后 {{days}} 天内完成钱包充值或兑换，按实际到账额度的 {{ratio}}% 返利；单个好友累计上限 {{cap}} 芽点。",
+    "Rebates go to your invite balance and can be transferred to your wallet at any time.": "返利计入邀请返利余额，可随时转入钱包。"
   }
 }

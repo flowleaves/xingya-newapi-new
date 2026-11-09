@@ -38,7 +38,6 @@ import { handleServerError } from '@/lib/handle-server-error'
 import { useCheckin } from '../hooks/use-checkin'
 import { formatCheckinDeadline } from '../lib/credit-expiry'
 import type { CheckinKeyResult } from '../types'
-import { CheckinCreditAmounts } from './checkin-credit-amounts'
 import { CheckinHistory } from './checkin-history'
 import { CheckinKeyDialog } from './checkin-key-dialog'
 
@@ -50,7 +49,6 @@ export function XingyaCheckinCard() {
   const [challenge, setChallenge] = useState(false)
   const [challengeKey, setChallengeKey] = useState(0)
   const [keyResult, setKeyResult] = useState<CheckinKeyResult>()
-  const [creditDetails, setCreditDetails] = useState(false)
   const checkin = useCheckin(month)
   async function claim(token?: string) {
     try {
@@ -187,7 +185,7 @@ export function XingyaCheckinCard() {
                 )}
               </p>
             )}
-            <p className='text-muted-foreground text-xs leading-relaxed'>
+            <p className='bg-muted/60 text-foreground rounded-lg px-3 py-2 text-xs leading-relaxed font-semibold'>
               {t(
                 'How to use: create a check-in key, then call models in the check-in group. Check-in credit is used first.'
               )}
@@ -208,13 +206,6 @@ export function XingyaCheckinCard() {
                 </AlertDescription>
               </Alert>
             )}
-            <Button
-              variant='link'
-              className='h-auto min-h-11 px-0 text-xs'
-              onClick={() => setCreditDetails(true)}
-            >
-              {t('Credit details')}
-            </Button>
             <div className='grid gap-2 sm:grid-cols-2'>
               <Button
                 variant='outline'
@@ -276,44 +267,6 @@ export function XingyaCheckinCard() {
           'Check-ins follow Beijing time. Check-in credit only works with check-in keys.'
         )}
       </p>
-      <Dialog
-        open={creditDetails}
-        onOpenChange={setCreditDetails}
-        title={t('Check-in credit details')}
-        contentClassName='sm:max-w-md'
-      >
-        <div className='flex flex-col gap-4'>
-          <div>
-            <p className='text-muted-foreground text-xs'>
-              {t('Total check-in credit awarded')}
-            </p>
-            <p className='mt-1 text-2xl font-semibold break-all tabular-nums'>
-              {formatQuotaWithCurrency(data.wallet.granted)}
-            </p>
-          </div>
-          <CheckinCreditAmounts credit={data.wallet} />
-          <p className='text-muted-foreground text-xs leading-relaxed'>
-            {t(
-              'Requests reserved before expiry can finish. Any unused credit returned after its deadline expires immediately.'
-            )}
-          </p>
-          {data.expiry.opening && (
-            <div className='bg-muted flex flex-col gap-2 rounded-lg p-3 text-xs leading-relaxed'>
-              <p className='font-medium'>{t('Pre-upgrade check-in credit')}</p>
-              <p className='text-muted-foreground'>
-                {t(
-                  'Pre-upgrade credit received a one-time 30-day grace period. Later check-ins do not extend it.'
-                )}
-              </p>
-              <p>
-                {t('Expires at (Beijing time)')}:{' '}
-                {formatCheckinDeadline(data.expiry.opening.expires_at, locale)}
-              </p>
-              <CheckinCreditAmounts credit={data.expiry.opening} />
-            </div>
-          )}
-        </div>
-      </Dialog>
       <Dialog
         open={challenge}
         onOpenChange={setChallenge}

@@ -450,6 +450,27 @@ export function InviteRebates() {
               )}
             </CardContent>
           </Card>
+
+          <div className='text-muted-foreground bg-muted/40 rounded-lg border px-3 py-2.5 text-xs leading-relaxed sm:px-4'>
+            <p className='text-foreground mb-1 font-semibold'>{t('Notes')}</p>
+            <ul className='list-disc space-y-1 pl-4'>
+              <li>
+                {t(
+                  'Within {{days}} days of a friend’s sign-up, wallet top-ups and redemption codes earn {{ratio}}% of the credited amount, up to {{cap}} sprouts per friend.',
+                  {
+                    days: formatNumber(summary.window_days),
+                    ratio: formatNumber(summary.ratio_percent),
+                    cap: formatNumber(summary.max_rebate_per_invitee),
+                  }
+                )}
+              </li>
+              <li>
+                {t(
+                  'Rebates go to your invite balance and can be transferred to your wallet at any time.'
+                )}
+              </li>
+            </ul>
+          </div>
         </div>
       </SectionPageLayout.Content>
 
