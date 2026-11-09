@@ -575,55 +575,16 @@ func HardDeleteUserById(id int) (int64, error) {
 }
 
 func inviteUser(inviterId int) error {
-	return inviteUserTx(DB, inviterId)
-}
-
-// inviteUserTx is the legacy affiliate-ledger path used by historical rewards.
-func inviteUserTx(tx *gorm.DB, inviterId int) error {
-	return inviteUserRewardTx(tx, inviterId, common.QuotaForInviter, false)
-}
-
-// inviteUserRewardTx credits one reward through the caller's transaction. New rewards
-// go straight to the wallet; the legacy path keeps its affiliate-quota semantics.
-func inviteUserRewardTx(tx *gorm.DB, inviterId int, quota int, wallet bool) error {
-	if quota <= 0 {
-		return nil
-	}
-	updates := map[string]any{
+	result := DB.Model(&User{}).Where("id = ?", inviterId).Updates(map[string]any{
 		"aff_count":   gorm.Expr("aff_count + ?", 1),
-		"aff_history": gorm.Expr("aff_history + ?", quota),
+		"aff_quota":   gorm.Expr("aff_quota + ?", common.QuotaForInviter),
+		"aff_history": gorm.Expr("aff_history + ?", common.QuotaForInviter),
+	})
+	if result.Error != nil {
+		return result.Error
 	}
-	if wallet {
-		updates["quota"] = gorm.Expr("quota + ?", quota)
-		result := tx.Model(&User{}).
-			Where("id = ? AND quota <= ?", inviterId, common.MaxWalletQuota-quota).
-			Updates(updates)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 1 {
-			return nil
-		}
-	} else {
-		updates["aff_quota"] = gorm.Expr("aff_quota + ?", quota)
-		result := tx.Model(&User{}).Where("id = ?", inviterId).Updates(updates)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 1 {
-			return nil
-		}
-	}
-
-	var count int64
-	if err := tx.Model(&User{}).Where("id = ?", inviterId).Count(&count).Error; err != nil {
-		return err
-	}
-	if count == 0 {
+	if result.RowsAffected == 0 {
 		return gorm.ErrRecordNotFound
-	}
-	if wallet {
-		return ErrWalletQuotaLimitExceeded
 	}
 	return nil
 }
