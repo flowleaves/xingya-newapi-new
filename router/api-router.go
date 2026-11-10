@@ -342,10 +342,13 @@ func SetApiRouter(router *gin.Engine) {
 		logRoute.GET("/self/search", middleware.UserAuth(), middleware.SearchRateLimit(), controller.SearchUserLogs)
 		// Self refund: the user-facing log detail card and the standalone refund
 		// page both read the refundable view; POST re-validates everything from
-		// scratch and never trusts the GET result. It also moves real money, so
-		// it carries a user-level rate limit like the other critical routes.
+		// scratch and never trusts the GET result. It deliberately does not use
+		// the shared critical-operation rate limit: that defaults to 20 requests
+		// per 20 minutes and would cap refunds below the administrator's
+		// configured daily maximum. The daily count and quota are enforced
+		// inside the refund transaction, which is the real money bound.
 		logRoute.GET("/self/refundable", middleware.UserAuth(), controller.GetSelfRefundable)
-		logRoute.POST("/self/refund", middleware.UserAuth(), middleware.UserCriticalRateLimit("self_refund"), controller.DoSelfRefund)
+		logRoute.POST("/self/refund", middleware.UserAuth(), controller.DoSelfRefund)
 
 		systemTaskRoute := apiRouter.Group("/system-task")
 		systemTaskRoute.Use(middleware.RootAuth())

@@ -239,7 +239,11 @@ export const getRefundable = async (
   selector?: RefundSelector
 ): Promise<GetRefundableResponse> => {
   const response = await api.get('/api/log/self/refundable', {
-    params: toRefundParams(selector),
+    // The standalone page bulk-refunds every row it receives, so the list view
+    // asks for the server maximum instead of the 10-row default. Otherwise one
+    // "refund all" only covers 10 logs and the daily allowance looks smaller
+    // than it is.
+    params: selector ? toRefundParams(selector) : { page_size: 100 },
   })
   return response.data
 }

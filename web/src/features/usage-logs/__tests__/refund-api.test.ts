@@ -74,13 +74,13 @@ describe('self-refund selectors', () => {
     })
   })
 
-  it('sends no selector for the list view', async () => {
+  it('asks for the maximum page size in the list view so bulk refunds cover the daily cap', async () => {
     mockGet.mockResolvedValue(emptyResponse)
 
     await getRefundable()
 
     expect(mockGet).toHaveBeenCalledWith('/api/log/self/refundable', {
-      params: undefined,
+      params: { page_size: 100 },
     })
   })
 
