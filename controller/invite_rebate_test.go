@@ -28,9 +28,9 @@ func TestGetInviteRebatesReturnsMaskedInviteeAndSummary(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(&model.User{}, &model.XingyaInviteRebate{}))
 
 	now := common.GetTimestamp()
-	inviter := model.User{Username: "api-inviter", AffCode: "apiinv", Quota: 0, Status: common.UserStatusEnabled}
-	invitee := model.User{Username: "invitee-name", AffCode: "apiinv2", InviterId: inviter.Id, CreatedAt: now - 3600, Status: common.UserStatusEnabled}
+	inviter := model.User{Username: "api-inviter", AffCode: "apiinv", Quota: 0, CreatedAt: now - 30*24*60*60, Status: common.UserStatusEnabled}
 	require.NoError(t, db.Create(&inviter).Error)
+	invitee := model.User{Username: "invitee-name", AffCode: "apiinv2", InviterId: inviter.Id, CreatedAt: now - 3600, Status: common.UserStatusEnabled}
 	require.NoError(t, db.Create(&invitee).Error)
 	require.NoError(t, db.Create(&model.XingyaInviteRebate{
 		InviterId:     inviter.Id,
@@ -67,6 +67,8 @@ func TestGetInviteRebatesReturnsMaskedInviteeAndSummary(t *testing.T) {
 	assert.True(t, body.Success)
 	assert.Equal(t, int64(1), body.Data.Total)
 	assert.Equal(t, int64(500_000), body.Data.Summary.TotalRebateQuota)
+	assert.Equal(t, int64(1), body.Data.Summary.InvitedCount)
+	assert.Equal(t, int64(1), body.Data.Summary.ActiveWindowCount)
 	require.Len(t, body.Data.Items, 1)
 	assert.Equal(t, "i***e", body.Data.Items[0].InviteeUsername)
 }
