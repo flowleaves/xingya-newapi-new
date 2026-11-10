@@ -1,0 +1,105 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+
+/* Shared Xingya surface treatment. Layout and responsive behavior stay in the
+ * components; this file only gives every existing primitive the same skin. */
+@layer components {
+  ::selection {
+    color: #17336d;
+    background: #cfe0ff;
+  }
+
+  [data-slot='sidebar-inset'] {
+    background:
+      radial-gradient(
+        ellipse 65% 45% at 85% 0%,
+        color-mix(in srgb, var(--primary) 6%, transparent),
+        transparent 75%
+      ),
+      var(--background);
+  }
+
+  [data-slot='button'].bg-primary {
+    box-shadow: 0 4px 12px
+      color-mix(in srgb, var(--primary) 18%, transparent);
+  }
+
+  [data-slot='button'].bg-primary:hover {
+    box-shadow: 0 6px 16px
+      color-mix(in srgb, var(--primary) 24%, transparent);
+  }
+
+  [data-slot='input'],
+  [data-slot='textarea'],
+  [data-slot='select-trigger'],
+  [data-slot='input-group'] {
+    background-color: color-mix(in srgb, var(--card) 72%, transparent);
+    box-shadow: 0 1px 2px rgb(30 65 120 / 0.025);
+  }
+
+  [data-slot='dialog-content'],
+  [data-slot='alert-dialog-content'],
+  [data-slot='sheet-content'],
+  [data-slot='drawer-content'],
+  [data-slot='popover-content'],
+  [data-slot='select-content'],
+  [data-slot='dropdown-menu-content'] {
+    border: 1px solid var(--border);
+    box-shadow:
+      0 18px 50px rgb(34 68 125 / 0.13),
+      0 3px 12px rgb(34 68 125 / 0.06);
+  }
+
+  [data-slot='select-content'],
+  [data-slot='dropdown-menu-content'] {
+    max-width: calc(100vw - 1rem);
+  }
+
+  [data-slot='table-header'] {
+    background: var(--table-header);
+  }
+
+  [data-slot='table-head'] {
+    color: var(--muted-foreground);
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  [data-slot='table-container'] {
+    scrollbar-color: color-mix(in srgb, var(--primary) 25%, var(--border))
+      transparent;
+  }
+
+  .dark [data-slot='dialog-content'],
+  .dark [data-slot='alert-dialog-content'],
+  .dark [data-slot='sheet-content'],
+  .dark [data-slot='drawer-content'],
+  .dark [data-slot='popover-content'],
+  .dark [data-slot='select-content'],
+  .dark [data-slot='dropdown-menu-content'] {
+    box-shadow: 0 20px 55px rgb(0 0 0 / 0.38);
+  }
+
+  @media (max-width: 767px) {
+    [data-slot='sidebar-menu-button'] {
+      min-height: 2.5rem;
+    }
+  }
+
+}

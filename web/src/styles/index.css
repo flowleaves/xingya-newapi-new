@@ -29,6 +29,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 @import './theme.css';
 @import './theme-presets.css';
+@import './xingya-surface.css';
 
 @layer base {
   :root {
@@ -568,7 +569,7 @@ For commercial licensing, please contact support@quantumnous.com
   @media (min-width: 641px) {
     [data-slot='card']:not([data-card-hover='false']):hover {
       transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgb(0 0 0 / 0.06);
+      box-shadow: 0 8px 24px rgb(50 90 155 / 0.09);
     }
 
     .dark [data-slot='card']:not([data-card-hover='false']):hover {

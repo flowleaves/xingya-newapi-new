@@ -59,6 +59,9 @@ export function SectionPageLayout(props: SectionPageLayoutProps) {
   const [footerContainer, setFooterContainer] = useState<HTMLDivElement | null>(
     null
   )
+  // Mobile actions get their own row by default so long titles and button
+  // groups never compete for the same narrow line. Callers can still opt out.
+  const stackActionsOnMobile = props.stackActionsOnMobile ?? true
 
   let title: ReactNode = null
   let actions: ReactNode = null
@@ -81,24 +84,30 @@ export function SectionPageLayout(props: SectionPageLayoutProps) {
   return (
     <PageFooterProvider container={footerContainer}>
       <Main>
-        <div className='shrink-0 px-3 pt-3 pb-2.5 sm:px-4 sm:pt-5 sm:pb-3'>
+        <div className='shrink-0 px-4 pt-4 pb-3 sm:px-6 sm:pt-6 sm:pb-4'>
           {breadcrumb != null && (
             <div className='mb-2 sm:mb-3'>{breadcrumb}</div>
           )}
           <div className='flex flex-wrap items-center justify-between gap-x-3 gap-y-2 sm:gap-x-4'>
             <div
               className={
-                props.stackActionsOnMobile
+                stackActionsOnMobile
                   ? 'min-w-0 flex-1 max-sm:basis-full'
                   : 'min-w-0 flex-1'
               }
             >
-              <h2 className='truncate text-base font-bold tracking-tight sm:text-lg'>
+              <h2 className='truncate text-lg font-bold tracking-tight sm:text-xl'>
                 {title}
               </h2>
             </div>
             {actions != null && (
-              <div className='flex max-w-full shrink-0 flex-wrap items-center justify-end gap-2 sm:gap-x-4'>
+              <div
+                className={
+                  stackActionsOnMobile
+                    ? 'flex max-w-full shrink-0 flex-wrap items-center justify-end gap-2 max-sm:w-full max-sm:justify-start sm:gap-x-4'
+                    : 'flex max-w-full shrink-0 flex-wrap items-center justify-end gap-2 sm:gap-x-4'
+                }
+              >
                 {actions}
               </div>
             )}
@@ -108,8 +117,8 @@ export function SectionPageLayout(props: SectionPageLayoutProps) {
         <div
           className={
             props.fixedContent
-              ? 'min-h-0 flex-1 overflow-hidden px-3 pt-1 pb-3 sm:px-4 sm:pt-1.5 sm:pb-4'
-              : 'min-h-0 flex-1 overflow-auto px-3 pt-1 pb-3 sm:px-4 sm:pt-1.5 sm:pb-4'
+              ? 'min-h-0 flex-1 overflow-hidden px-4 pt-1 pb-4 sm:px-6 sm:pt-2 sm:pb-6'
+              : 'min-h-0 flex-1 overflow-auto px-4 pt-1 pb-4 sm:px-6 sm:pt-2 sm:pb-6'
           }
         >
           {content}
